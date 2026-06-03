@@ -2,10 +2,11 @@ from pathlib import Path
 import sys
 import asyncio
 
-# Add project root (parent of "agent_wrap") to import path before local imports.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+HELPERS_ROOT = Path(__file__).resolve().parent.parent   # helpers/
+PROJECT_ROOT = HELPERS_ROOT.parent                      # repo root (get_key lives here)
+for _p in [str(PROJECT_ROOT), str(HELPERS_ROOT)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from AgentBuilder import AgentBuilder
 from Agent import Agent

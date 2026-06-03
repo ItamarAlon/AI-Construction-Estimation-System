@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Annotated
 import operator
+
+_helpers = Path(__file__).resolve().parent.parent   # helpers/
+_root = _helpers.parent                             # repo root (get_key lives here)
+for _p in [str(_root), str(_helpers)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from typing_extensions import TypedDict
 from langchain_openai import ChatOpenAI

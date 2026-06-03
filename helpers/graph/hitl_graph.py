@@ -13,9 +13,10 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
 from langgraph.checkpoint.memory import MemorySaver
 
-_root = Path(__file__).resolve().parent.parent
+_helpers = Path(__file__).resolve().parent.parent   # helpers/
+_root = _helpers.parent                             # repo root (get_key lives here)
 sys.path.insert(0, str(_root))
-sys.path.insert(0, str(_root / "agent_wrap"))
+sys.path.insert(0, str(_helpers))
 
 from agent_wrap.AgentBuilder import AgentBuilder
 from agent_wrap.Agent import Agent

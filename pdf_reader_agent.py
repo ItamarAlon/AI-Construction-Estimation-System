@@ -27,9 +27,10 @@ def _pdf_to_content_blocks(pdf_path: str) -> list:
     for i, page in enumerate(doc, 1):
         text = page.get_text().strip()
         if text:
+            #print("written pdf text: ", text)
             blocks.append({"type": "text", "text": f"Page {i} extracted text:\n{text}"})
-        # Render at 2× resolution so fine details (dimensions, labels) stay readable
-        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        # Render at 4× resolution — needed for small Hebrew text and fine plan details
+        pix = page.get_pixmap(matrix=fitz.Matrix(4, 4))
         b64 = base64.b64encode(pix.tobytes("png")).decode()
         blocks.append({"type": "text", "text": f"Page {i} image:"})
         blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
@@ -63,6 +64,7 @@ agent = AgentBuilder(
         "You are a helpful assistant that reads and analyses construction plan PDFs. "
         "The user may include PDF page images in their message. Analyse them thoroughly: "
         "identify room names, dimensions, structural elements, annotations, and spatial layout."
+        "The user might ask questions about the content of the PDF. Analys the PDF page images first and then answer based on your analysis."
     ),
 ).with_memory().build()
 

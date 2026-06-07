@@ -96,8 +96,13 @@ agent = AgentBuilder(
         # "Understand which items in the pdf belong to what task. For example what walls are for destruction, and what are for construction."
         # "To do that, look at the colors of the items."
         "Use the tool 'get_available_tasks' to get the list of available constructions tasks"
-        
-        "After detecting the tasks, you need to estimate how much it will cost."
+
+        "After detecting the tasks, you need to plan how to calculate the cost of executing each task."
+        "To do that, look at the entire pdf. Tell me which item belong to which task."
+        #"For example, if the tasks are destroying walls and constructing walls, tell me which walls (their lengths) are for construction and which ones are for destruction."
+        "Do that by looking at the legend box (if there is one)."
+
+        "After planning, calculate the cost of each task."
         "To do that, use the tool 'get_task_price'."
         "Give the tool the exact name of the task (which you got from the 'get_available_tasks' tool), and it will give you it's price."
         "For some tasks, the price will be given per meter (for example wall demolition price per meter of wall to destroy)."
@@ -106,10 +111,7 @@ agent = AgentBuilder(
         "and multiplying by the price of the task."
         "For example, count how many meters of wall to destroy in total (by summing the lengths of all walls marked for destruction)"
         ", and multiply by the wall demolition price per meter."
-        
-        # "Before calculating price, mark which parts of the map in the pdf belongs to which task. (for example which walls are for constuction and which ones are for demolition)"
-        # "Do that so you don't mix up between tasks during calculation."
-        
+
         "Use 'sum_numbers' tool for finding sum of multiple numbers"
         "Use 'multiply_numbers' for multiplying 2 numbers"
     )

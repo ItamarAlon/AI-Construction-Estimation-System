@@ -3,6 +3,10 @@ import sys
 import base64
 import re
 
+from pywin.framework.toolmenu import tools
+
+from construction_tasks_prices.read_construction_tasks_prices import get_available_tasks_tool
+
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.
 _root = Path(__file__).resolve().parent
@@ -60,12 +64,18 @@ model = ChatOpenAI(
 
 agent = AgentBuilder(
     model=model,
+    tools=[get_available_tasks_tool],
     system_prompt=(
         "You are a helpful assistant that reads and analyses construction plan PDFs. "
         "The user may include PDF page images in their message. Analyse them thoroughly: "
         "identify room names, dimensions, structural elements, annotations, and spatial layout."
-        "The user might ask questions about the content of the PDF. Analys the PDF page images first and then answer based on your analysis."
-    ),
+        
+        "There are construction task(s) in the pdf. You have an access to a list of available tasks."
+        "Read the list, and detect which of the tasks are present in the pdf."
+        "The tasks can be explicitly mentioned in the pdf, or can be inferred from it's content."
+        
+        "Use the tool 'get_available_tasks' to get the list of available constructions tasks"
+    )
 ).with_memory().build()
 
 

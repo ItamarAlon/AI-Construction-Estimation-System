@@ -1,10 +1,11 @@
 import json
+from pathlib import Path
 from langchain.tools import tool
 
-TASKS_PRICES_JSON_FILENAME = ""
+_PRICES_FILE = Path(__file__).parent / "construction_tasks_prices.json"
 
 def _get_construction_tasks_prices() -> dict:
-    with open(TASKS_PRICES_JSON_FILENAME + ".json", "r") as f:
+    with open(_PRICES_FILE, "r") as f:
         return json.load(f)
 
 def get_task_prices(task_name : str):

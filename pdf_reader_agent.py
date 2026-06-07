@@ -5,7 +5,9 @@ import re
 
 from pywin.framework.toolmenu import tools
 
+from langchain.tools import tool
 from construction_tasks_prices.read_construction_tasks_prices import get_available_tasks_tool
+from construction_tasks_prices.read_construction_tasks_prices import get_task_price_tool
 
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.
@@ -54,6 +56,24 @@ def _build_input(user_text: str) -> dict:
 
     return {"messages": [{"role": "user", "content": content}]}
 
+@tool
+def sum_numbers(numbers : list[float]):
+    """
+    Input: List of numbers
+    Output: Sum of numbers
+    """
+    print("numbers to sum: ", numbers)
+    return sum(numbers)
+
+@tool
+def multiply_numbers(num1, num2):
+    """
+    Input: 2 numbers
+    Output: num1 * num2
+    """
+    print(f"{num1}*{num2}={num1*num2}")
+    return num1 * num2
+
 
 model = ChatOpenAI(
     model="openai/gpt-4o",   # vision-capable model needed to analyse the page images
@@ -64,7 +84,7 @@ model = ChatOpenAI(
 
 agent = AgentBuilder(
     model=model,
-    tools=[get_available_tasks_tool],
+    tools=[get_available_tasks_tool, get_task_price_tool, sum_numbers, multiply_numbers],
     system_prompt=(
         "You are a helpful assistant that reads and analyses construction plan PDFs. "
         "The user may include PDF page images in their message. Analyse them thoroughly: "
@@ -73,8 +93,25 @@ agent = AgentBuilder(
         "There are construction task(s) in the pdf. You have an access to a list of available tasks."
         "Read the list, and detect which of the tasks are present in the pdf."
         "The tasks can be explicitly mentioned in the pdf, or can be inferred from it's content."
-        
+        # "Understand which items in the pdf belong to what task. For example what walls are for destruction, and what are for construction."
+        # "To do that, look at the colors of the items."
         "Use the tool 'get_available_tasks' to get the list of available constructions tasks"
+        
+        "After detecting the tasks, you need to estimate how much it will cost."
+        "To do that, use the tool 'get_task_price'."
+        "Give the tool the exact name of the task (which you got from the 'get_available_tasks' tool), and it will give you it's price."
+        "For some tasks, the price will be given per meter (for example wall demolition price per meter of wall to destroy)."
+        "And a task can can be executed multiple times in the pdf (for example destroy multiple kitchens)."
+        "Either way, calculate the final price of executing all the tasks, by counting the amount of times a task will be executed (using sum),"
+        "and multiplying by the price of the task."
+        "For example, count how many meters of wall to destroy in total (by summing the lengths of all walls marked for destruction)"
+        ", and multiply by the wall demolition price per meter."
+        
+        # "Before calculating price, mark which parts of the map in the pdf belongs to which task. (for example which walls are for constuction and which ones are for demolition)"
+        # "Do that so you don't mix up between tasks during calculation."
+        
+        "Use 'sum_numbers' tool for finding sum of multiple numbers"
+        "Use 'multiply_numbers' for multiplying 2 numbers"
     )
 ).with_memory().build()
 

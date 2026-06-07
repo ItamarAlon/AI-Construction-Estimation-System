@@ -79,7 +79,7 @@ model = ChatOpenAI(
     model="openai/gpt-4o",   # vision-capable model needed to analyse the page images
     temperature=0.2,
     base_url="https://openrouter.ai/api/v1",
-    api_key=get_openrouter_api_key(),
+    api_key=get_openrouter_api_key()
 )
 
 agent = AgentBuilder(
@@ -98,9 +98,10 @@ agent = AgentBuilder(
         "Use the tool 'get_available_tasks' to get the list of available constructions tasks"
 
         "After detecting the tasks, you need to plan how to calculate the cost of executing each task."
-        "To do that, look at the entire pdf. Tell me which item belong to which task."
+        "To do that, look at the entire pdf. Tell me which item belong to which task (The lengths)."
         #"For example, if the tasks are destroying walls and constructing walls, tell me which walls (their lengths) are for construction and which ones are for destruction."
-        "Do that by looking at the legend box (if there is one)."
+        "Do that by looking at the legend box (if there is one), which tell you which color means what task."
+        "After that, you should look for all appearances of the color in the map. All the colored items belong to that specific task, and ONLY those items."
 
         "After planning, calculate the cost of each task."
         "To do that, use the tool 'get_task_price'."

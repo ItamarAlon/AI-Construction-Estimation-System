@@ -81,6 +81,11 @@ class AgentBuilder:
         self.__add_middleware(pdf_injection_middleware)
         return self
 
+    def with_todos(self):
+        from langchain.agents.middleware import TodoListMiddleware
+        self.__add_middleware(TodoListMiddleware())
+        return self
+
     def build(self):
         return Agent(*self.args, **self.kwargs)
 

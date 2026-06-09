@@ -44,6 +44,8 @@ agent = AgentBuilder(
         "The output should be in this json format:"
         "{Task 1 Name: explanation on how to find task 1 on the map,"
         "Task 2 Name: explanation on how to find task 2 on the map,...}"
+        
+        "Make sure you put the exact task name you got from the tool 'get_available_tasks' in the json output."
     )
 ).with_memory().pdf_reader().build()
 

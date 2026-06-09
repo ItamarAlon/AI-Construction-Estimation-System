@@ -2,8 +2,8 @@ from pathlib import Path
 import sys
 
 from langchain.tools import tool
-from construction_tasks_prices.read_construction_tasks_prices import get_available_tasks_tool
 from construction_tasks_prices.read_construction_tasks_prices import get_task_price_tool
+from helpers.wall_measurement_tool import get_wall_lengths_by_color
 
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.
@@ -40,33 +40,23 @@ model = ChatOpenAI(
 
 agent = AgentBuilder(
     model=model,
-    tools=[get_task_price_tool, sum_numbers, multiply_numbers],
+    tools=[get_task_price_tool, multiply_numbers, get_wall_lengths_by_color],
     system_prompt=(
-        "You are a helpful assistant that reads and analyses construction plan PDFs. "
-        "The user may include PDF page images in their message. Analyse them thoroughly: "
-        "identify room names, dimensions, structural elements, annotations, and spatial layout."
-        
-        # "You are given a list of construction tasks found in the pdf, and explanations for how to tell them apart on the map."
-        # "You need to calculate the cost of each construction task."
-        # "Use the tool 'get_task_price', passing the exact task name from 'get_available_tasks'. "
-        # "For per-meter tasks, sum the lengths of all items in that category using 'sum_numbers', "
-        # "then multiply by the unit price using 'multiply_numbers'. "
-        # "Report the total cost for each task and an overall grand total."
-        # "To find all items in the category on the map, read the explanation given for you on the list."
-        # "If the items have lengths (like walls), the length of each item on the map, "
-        # "is the number that appears the closest to the item in question (and only that number)."
-        # "For example if you are looking for red walls, the number that appears right next to the red wall in the length of the red wall, "
-        # "The one that is the closest distance to the red wall (more than any other number)."
-        
-        "sum all the lengths of yellow walls (only yellow walls, no walls of other color). using the 'sum numbers' tool"
-        "To find the length of each yellow wall segment, read the dimension annotation "
-        "that is directly attached to that specific segment (the number with an arrow or "
-        "tick marks pointing to its two endpoints). Do NOT use room dimensions or any "
-        "annotation that spans across multiple elements. If a segment has no annotation, "
-        "state that its length is unknown rather than estimating."
-
+        "You are a construction cost estimator. "
+        "The user will give you a list of detected construction tasks and a PDF path. "
+        "For each task, calculate its cost as follows:\n"
+        "1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
+        "corresponds to that task (e.g. 'yellow' for demolition, 'red' for new construction). "
+        "This returns the exact total wall length in meters.\n"
+        "2. Call 'get_task_price' with the exact task name to get the unit price.\n"
+        "3. Call 'multiply_numbers' to compute total cost = length × unit price.\n"
+        "Report each task's total length, unit price, and cost. "
+        "Finish with an overall grand total.\n\n"
+        "IMPORTANT: Do not write a final summary until you have called "
+        "'get_task_price' and 'multiply_numbers' for every task. "
+        "If tasks remain unpriced, your next output must be a tool call."
     )
-).with_memory().pdf_reader().build()
+).with_memory().pdf_reader().with_todos().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

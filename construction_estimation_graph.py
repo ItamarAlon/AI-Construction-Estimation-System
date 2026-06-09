@@ -23,8 +23,8 @@ def run_task_finder(state: State) -> dict:
 
 
 def run_pdf_calculator(state: State) -> dict:
-    tasks_dict = parse_json(state['detected_tasks'])
-    msg = f"{state['pdf_path']}\n\n'Building Wall (per meter)-'{tasks_dict["Building Wall (per meter)"]}"
+    # tasks_dict = parse_json(state['detected_tasks'])
+    msg = f"{state['pdf_path']}\n\n{state['detected_tasks']}"
     print(msg)
     return {"result": pdf_calculator_agent.run(msg)}
 

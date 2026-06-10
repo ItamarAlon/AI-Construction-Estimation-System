@@ -45,7 +45,8 @@ agent = AgentBuilder(
         "{Task 1 Name: explanation on how to find task 1 on the map,"
         "Task 2 Name: explanation on how to find task 2 on the map,...}"
         
-        "Make sure you put the exact task name you got from the tool 'get_available_tasks' in the json output."
+        "Make sure you put the EXACT task name you got from the tool 'get_available_tasks' in the json output. Including '(Per Meter)' text if it appears."
+        "Don't include in the json tasks that you didn't find in the pdf."
     )
 ).with_memory().pdf_reader().build()
 

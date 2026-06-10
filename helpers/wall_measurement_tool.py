@@ -111,6 +111,121 @@ def _calibrate(page) -> float:
     return statistics.median(ratios)
 
 
+def _merge_nearby_rects(rects: list, proximity: float) -> list:
+    """Iteratively merge rects whose centers are within `proximity` PDF units of each other."""
+    clusters = list(rects)
+    merged = True
+    while merged:
+        merged = False
+        result = []
+        used = [False] * len(clusters)
+        for i in range(len(clusters)):
+            if used[i]:
+                continue
+            current = clusters[i]
+            ci = ((current.x0 + current.x1) / 2, (current.y0 + current.y1) / 2)
+            for j in range(i + 1, len(clusters)):
+                if used[j]:
+                    continue
+                other = clusters[j]
+                cj = ((other.x0 + other.x1) / 2, (other.y0 + other.y1) / 2)
+                dist = ((ci[0] - cj[0]) ** 2 + (ci[1] - cj[1]) ** 2) ** 0.5
+                if dist <= proximity:
+                    current = current | other
+                    ci = ((current.x0 + current.x1) / 2, (current.y0 + current.y1) / 2)
+                    used[j] = True
+                    merged = True
+            result.append(current)
+        clusters = result
+    return clusters
+
+
+@tool
+def count_outline_shapes_by_color(pdf_path: str, color: str) -> str:
+    """Count distinct unfilled (outline-only) colored shapes in a PDF floor plan.
+
+    Detects items drawn as a colored stroke with no fill — e.g. door arcs,
+    window symbols, fixtures — that get_wall_lengths_by_color misses because
+    it only reads filled shapes.
+
+    Uses the same auto-calibration and color-matching logic. Nearby path
+    segments that belong to the same symbol (door panel + swing arc) are
+    grouped so each physical item is counted once. Sizes are reported in cm
+    so the agent can sanity-check they look like real doors/windows.
+
+    Args:
+        pdf_path: Path to the PDF construction plan.
+        color: Stroke color to detect. Supported: red, yellow, green, blue,
+               cyan, magenta, purple, black, white, gray.
+
+    Returns:
+        Count of distinct shapes and their estimated sizes in cm.
+    """
+    supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
+    if color.lower() not in supported:
+        return f"Unknown color '{color}'. Supported: {', '.join(supported)}"
+
+    path_obj = Path(pdf_path.strip("'\""))
+    if not path_obj.exists():
+        return f"File not found: {pdf_path}"
+
+    doc = fitz.open(str(path_obj))
+    page = doc[0]
+
+    try:
+        cm_per_unit = _calibrate(page)
+    except ValueError as e:
+        doc.close()
+        return f"Calibration failed: {e}"
+
+    max_x = page.rect.width * _PLAN_WIDTH_FRACTION
+
+    rects = []
+    for drawing in page.get_drawings():
+        stroke = drawing.get("color")
+        fill = drawing.get("fill")
+
+        if not stroke or len(stroke) < 3:
+            continue
+        if not _matches_color(stroke, color):
+            continue
+        # Skip shapes that are clearly filled with a chromatic color —
+        # those are walls already handled by get_wall_lengths_by_color.
+        if fill and len(fill) >= 3 and _is_chromatic(fill):
+            continue
+
+        rect = drawing["rect"]
+        if rect.x0 >= max_x:
+            continue
+        w, h = rect.width, rect.height
+        if max(w, h) < _MIN_UNITS:
+            continue
+        # Keep only roughly-square shapes (arc bounding boxes are ~1:1).
+        # This filters out panel lines (~13:1), jamb lines (~1:15), and
+        # wide text-box outlines (~6:1) that share the same stroke color.
+        ratio = w / h if h > 0 else float("inf")
+        if not (0.5 <= ratio <= 2.0):
+            continue
+
+        rects.append(rect)
+
+    doc.close()
+
+    if not rects:
+        return f"No unfilled {color} outline shapes found in the floor plan area."
+
+    # Cluster path segments within 10 cm of each other into one symbol.
+    proximity = 10 / cm_per_unit
+    clusters = _merge_nearby_rects(rects, proximity)
+    count = len(clusters)
+    sizes_cm = sorted(round(max(c.width, c.height) * cm_per_unit) for c in clusters)
+
+    return (
+        f"Found {count} distinct {color} outline shape(s) in the floor plan.\n"
+        f"Estimated sizes (largest dimension): {sizes_cm} cm"
+    )
+
+
 @tool
 def get_wall_lengths_by_color(pdf_path: str, color: str) -> str:
     """Measure the total real-world length of all wall segments of a given color in a PDF plan.

@@ -3,7 +3,7 @@ import sys
 
 from langchain.tools import tool
 from construction_tasks_prices.read_construction_tasks_prices import get_task_price_tool
-from helpers.wall_measurement_tool import get_wall_lengths_by_color
+from helpers.wall_measurement_tool import get_wall_lengths_by_color, count_outline_shapes_by_color
 
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.
@@ -40,21 +40,62 @@ model = ChatOpenAI(
 
 agent = AgentBuilder(
     model=model,
-    tools=[get_task_price_tool, multiply_numbers, get_wall_lengths_by_color],
+    tools=[get_task_price_tool, multiply_numbers, get_wall_lengths_by_color, count_outline_shapes_by_color],
     system_prompt=(
         "You are a construction cost estimator. "
         "The user will give you a list of detected construction tasks and a PDF path. "
-        "For each task, calculate its cost as follows:\n"
-        "1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
+        "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
+        "then calculate its cost accordingly:\n\n"
+        "IF the task is measured in meters (e.g. wall demolition, wall construction — "
+        "tasks that are drawn as colored lines on the floor plan):\n"
+        "  1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
         "corresponds to that task (e.g. 'yellow' for demolition, 'red' for new construction). "
         "This returns the exact total wall length in meters.\n"
-        "2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-        "3. Call 'multiply_numbers' to compute total cost = length × unit price.\n"
-        "Report each task's total length, unit price, and cost. "
+        "  2. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
+        "  3. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
+        "ELSE the task is per-unit (e.g. door demolition, kitchen demolition, bathroom renovation — "
+        "tasks that appear as discrete countable items: doors, fixtures, rooms, or labeled elements):\n"
+        "  1. If the items are drawn as colored outlines without fill (e.g. door arcs, window symbols), "
+        "call 'count_outline_shapes_by_color' with the PDF path and the stroke color of those items. "
+        "This correctly detects unfilled shapes that get_wall_lengths_by_color would miss. "
+        "Sanity-check the returned sizes — door widths are typically 70–100 cm. "
+        "If the items are rooms or labeled areas, read the PDF visually and count them instead.\n"
+        "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
+        "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
+        "Report each task's quantity (meters or count), unit price, and total cost. "
         "Finish with an overall grand total.\n\n"
         "IMPORTANT: Do not write a final summary until you have called "
         "'get_task_price' and 'multiply_numbers' for every task. "
         "If tasks remain unpriced, your next output must be a tool call."
+
+        # "You are a construction cost estimator. "
+        # "The user will give you a list of detected construction tasks and a PDF path. "
+        # "For each task, calculate its cost as follows:\n"
+        # "1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
+        # "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
+        # "then calculate its cost accordingly:\n\n"
+        # "IF the task is measured in meters (e.g. wall demolition, wall construction — "
+        # "tasks that are drawn as colored lines on the floor plan):\n"
+        # "  1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
+        # "corresponds to that task (e.g. 'yellow' for demolition, 'red' for new construction). "
+        # "This returns the exact total wall length in meters.\n"
+        #
+        #
+        # "2. Call 'get_task_price' with the exact task name to get the unit price.\n"
+        # "3. Call 'multiply_numbers' to compute total cost = length × unit price.\n"
+        # "Report each task's total length, unit price, and cost. "
+        # "  2. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
+        # "  3. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
+        # "ELSE the task is per-unit (e.g. kitchen demolition, bathroom renovation — "
+        # "tasks that appear as discrete labeled items or rooms on the floor plan):\n"
+        # "  1. Read the PDF and count how many times that item appears on the map "
+        # "(e.g. 2 kitchens marked for destruction → count = 2).\n"
+        # "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
+        # "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
+        # "Report each task's quantity (meters or count), unit price, and total cost. "
+        # "Finish with an overall grand total.\n\n"
+        # "IMPORTANT: Do not write a final summary until you have called "
+        # "'get_task_price' and 'multiply_numbers' for every task. "
     )
 ).with_memory().pdf_reader().with_todos().build()
 

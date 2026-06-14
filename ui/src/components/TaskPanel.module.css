@@ -1,0 +1,241 @@
+.panel {
+  width: 360px;
+  min-width: 320px;
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827;
+  margin: 0;
+}
+
+.hint {
+  color: #9ca3af;
+  font-size: 0.875rem;
+  padding: 1rem 1.5rem;
+  margin: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1.5rem;
+  border-bottom: 1px solid #f3f4f6;
+  gap: 0.5rem;
+}
+
+.item:hover {
+  background: #f9fafb;
+}
+
+.itemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.itemName {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemPrice {
+  font-size: 0.8rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+.badgeMeter,
+.badgeUnit {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.badgeMeter {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badgeUnit {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.itemActions {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.editBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 0.95rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.editBtn:hover {
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.deleteBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.deleteBtn:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.editRow {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.currencySymbol {
+  font-size: 0.8rem;
+  color: #374151;
+  font-weight: 600;
+}
+
+.editInput {
+  width: 72px;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #6366f1;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.saveBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #16a34a;
+  font-size: 0.95rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.saveBtn:hover {
+  color: #15803d;
+  background: #dcfce7;
+}
+
+.cancelBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.cancelBtn:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.form {
+  border-top: 1px solid #e5e7eb;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.formTitle {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #374151;
+  margin: 0 0 0.25rem;
+}
+
+.input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.input:focus {
+  border-color: #6366f1;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.addBtn {
+  padding: 0.55rem;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.addBtn:hover {
+  background: #4f46e5;
+}
+
+.error {
+  font-size: 0.8rem;
+  color: #dc2626;
+  margin: 0;
+  background: #fee2e2;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+}

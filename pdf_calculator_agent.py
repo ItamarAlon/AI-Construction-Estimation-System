@@ -3,7 +3,7 @@ import sys
 
 from langchain.tools import tool
 from construction_tasks_prices.read_construction_tasks_prices import get_task_price_tool
-from helpers.wall_measurement_tool import get_wall_lengths_by_color, count_outline_shapes_by_color
+from wall_measurement_tool import get_wall_lengths_by_color, count_outline_shapes_by_color
 
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.

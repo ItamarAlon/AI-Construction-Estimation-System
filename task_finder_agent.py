@@ -38,19 +38,23 @@ agent = AgentBuilder(
         
         "Also tell the user how can he tell the tasks apart in the map found in the pdf."
         "Which parts of the map are part of each task?"
-        "The output will be passed to another agent that will calculate the cost of each task, "
-        "so write a through explanation for each task that another agent will understand."
+        "The output will be passed to another agent that will calculate the cost of each task in the pdf, "
+        "so write a through explanation for each task that you found in the pdf (and only for tasks that you found), that another agent will understand."
         
-        "The output should be in this json format:"
-        "{Task 1 Name: explanation on how to find task 1 on the map,"
-        "Task 2 Name: explanation on how to find task 2 on the map,...}"
-        
+        "The output HAS to be in json format."
         "Make sure you put the EXACT task name you got from the tool 'get_available_tasks' in the json output. Including '(Per Meter)' text if it appears."
         "Don't include in the json tasks that you didn't find in the pdf."
+        "Here is the json output format (for 2 tasks in this example):"
+        "{Task 1 Name: explanation on how to find task 1 on the map,"
+        "Task 2 Name: explanation on how to find task 2 on the map,...}\n"
+
+        "It's also possible that none of the construction tasks returned from 'get_available_tasks' are presented in the pdf."
+        "If that happens, return just an empty json"
+
     )
 ).with_memory().pdf_reader().build()
 
-PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
+PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
 
 if __name__ == "__main__":
     question = PDF_PATH

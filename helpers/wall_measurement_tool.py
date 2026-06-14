@@ -195,16 +195,21 @@ def count_outline_shapes_by_color(pdf_path: str, color: str) -> str:
             continue
 
         rect = drawing["rect"]
-        if rect.x0 >= max_x:
+        # Use the shape's center to decide if it's in the plan area, not just
+        # its left edge — annotation boxes that straddle the boundary would
+        # pass an x0-only check but their center is in the title block.
+        center_x = (rect.x0 + rect.x1) / 2
+        if center_x >= max_x:
             continue
         w, h = rect.width, rect.height
         if max(w, h) < _MIN_UNITS:
             continue
-        # Keep only roughly-square shapes (arc bounding boxes are ~1:1).
-        # This filters out panel lines (~13:1), jamb lines (~1:15), and
-        # wide text-box outlines (~6:1) that share the same stroke color.
+        # Lenient aspect-ratio guard: keeps swing doors (~1:1), double/sliding
+        # doors (~2–3:1), and rectangular windows (~1:3), while reliably
+        # excluding door panel lines (~13:1) and jamb edge lines (~1:15).
+        # Wide annotation-box outlines (~6:1) are also excluded.
         ratio = w / h if h > 0 else float("inf")
-        if not (0.5 <= ratio <= 2.0):
+        if not (0.25 <= ratio <= 4.0):
             continue
 
         rects.append(rect)

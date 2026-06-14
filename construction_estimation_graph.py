@@ -21,10 +21,11 @@ def parse_json(text: str) -> dict:
 def run_task_finder(state: State) -> dict:
     return {"detected_tasks": task_finder_agent.run(state["pdf_path"])}
 
-
 def run_pdf_calculator(state: State) -> dict:
-    # tasks_dict = parse_json(state['detected_tasks'])
-    msg = f"{state['pdf_path']}\n\n{state['detected_tasks']}"
+    tasks_dict = parse_json(state['detected_tasks'])
+    if not tasks_dict:
+        return {"result": "No tasks were found"}
+    msg = f"{state['pdf_path']}\n\n{tasks_dict}"
     print(msg)
     return {"result": pdf_calculator_agent.run(msg)}
 
@@ -40,7 +41,9 @@ graph = (
 )
 
 #PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
-PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\הריסה (1).pdf"
+#PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\הריסה (1).pdf"
+#PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
+PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\סט תוכניות (1).pdf"
 
 if __name__ == "__main__":
     result = graph.invoke({"pdf_path": PDF_PATH})

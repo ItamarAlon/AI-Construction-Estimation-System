@@ -8,6 +8,7 @@ import pymupdf as fitz
 # Hue targets in degrees [0, 360). All shades sharing a hue match the same name.
 _HUE_TARGETS: dict[str, float] = {
     "red":     0,
+    "orange":  30,
     "yellow":  60,
     "green":   120,
     "cyan":    180,
@@ -51,12 +52,24 @@ def _is_chromatic(fill: tuple) -> bool:
 
 
 def _calibrate(page) -> float:
-    """Derive cm_per_pdf_unit from the plan's own dimension annotations.
+    """Derive cm_per_pdf_unit for this page.
 
-    For each colored path in the floor plan area, find the nearest numeric
-    annotation and compute annotation_value / path_length. Returns the median,
-    making it robust to outliers.
+    Strategy 1 — scale ratio in title block text (e.g. "1:50").
+    Many CAD exports convert dimension numbers to paths, making them
+    invisible to text extraction, but the title block scale tag remains
+    as real text.  1 PDF point = 1/72 inch = 2.54/72 cm; at scale 1:N
+    that point represents N × 2.54/72 real-world cm.
+
+    Strategy 2 — match colored paths to nearby numeric dimension
+    annotations (works for PDFs that keep dimensions as text).
     """
+    # Strategy 1: parse "1:N" from anywhere on the page
+    page_text = page.get_text("text")
+    m = re.search(r"\b1:(\d+)\b", page_text)
+    if m:
+        return int(m.group(1)) * (2.54 / 72)
+
+    # Strategy 2: annotation-matching fallback
     max_x = page.rect.width * _PLAN_WIDTH_FRACTION
     max_dist = page.rect.width * 0.05
 
@@ -77,7 +90,10 @@ def _calibrate(page) -> float:
                             annotations.append((val, cx, cy))
 
     if not annotations:
-        raise ValueError("No numeric dimension annotations found in the floor plan area.")
+        raise ValueError(
+            "Calibration failed: no '1:N' scale tag found in the title block and "
+            "no numeric dimension annotations found in the plan area."
+        )
 
     colored_paths: list[tuple[float, float, float]] = []
     for d in page.get_drawings():
@@ -141,7 +157,7 @@ def _merge_nearby_rects(rects: list, proximity: float) -> list:
 
 
 @tool
-def count_outline_shapes_by_color(pdf_path: str, color: str) -> str:
+def count_outline_shapes_by_color(pdf_path: str, color: str, page_number: int = 1) -> str:
     """Count distinct unfilled (outline-only) colored shapes in a PDF floor plan.
 
     Detects items drawn as a colored stroke with no fill — e.g. door arcs,
@@ -155,8 +171,9 @@ def count_outline_shapes_by_color(pdf_path: str, color: str) -> str:
 
     Args:
         pdf_path: Path to the PDF construction plan.
-        color: Stroke color to detect. Supported: red, yellow, green, blue,
-               cyan, magenta, purple, black, white, gray.
+        color: Stroke color to detect. Supported: red, orange, yellow, green,
+               blue, cyan, magenta, purple, black, white, gray.
+        page_number: 1-indexed page number to read (default 1 = first page).
 
     Returns:
         Count of distinct shapes and their estimated sizes in cm.
@@ -170,7 +187,11 @@ def count_outline_shapes_by_color(pdf_path: str, color: str) -> str:
         return f"File not found: {pdf_path}"
 
     doc = fitz.open(str(path_obj))
-    page = doc[0]
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= len(doc):
+        doc.close()
+        return f"Page {page_number} out of range — PDF has {len(doc)} page(s)."
+    page = doc[page_idx]
 
     try:
         cm_per_unit = _calibrate(page)
@@ -232,22 +253,41 @@ def count_outline_shapes_by_color(pdf_path: str, color: str) -> str:
 
 
 @tool
-def get_wall_lengths_by_color(pdf_path: str, color: str) -> str:
-    """Measure the total real-world length of all wall segments of a given color in a PDF plan.
+def get_wall_lengths_by_color(
+    pdf_path: str, color: str, page_number: int = 1, drawing_type: str = "fill"
+) -> str:
+    """Measure the total real-world length of all colored segments of a given type in a PDF plan.
 
     Reads directly from the PDF vector geometry and auto-calibrates the unit conversion
     from the plan's own dimension annotations — works for any scale or paper size.
     Color matching uses HSV hue, so all shades of a color (e.g. dark red, bright red,
     salmon) are treated as the same color.
 
+    Before calling this tool, read the relevant PDF page to determine how the elements
+    are drawn: solid filled shapes (drawing_type="fill") or colored outlines/strokes
+    (drawing_type="stroke"). Passing the wrong type returns 0 results.
+
     Args:
         pdf_path: Path to the PDF construction plan.
-        color: Wall color to measure. Supported: red, yellow, green, blue, cyan,
-               magenta, purple, black, white, gray.
+        color: Color to measure. Supported: red, orange, yellow, green, blue,
+               cyan, magenta, purple, black, white, gray.
+        page_number: 1-indexed page number to read (default 1 = first page).
+        drawing_type: how to match shapes by color —
+                      "fill"   — only shapes whose interior is the target color
+                                 (solid colored bars, most demolition plans).
+                      "stroke" — only shapes whose outline is the target color
+                                 and have no solid fill (pure outline elements).
+                      "any"    — shapes where either fill or stroke matches
+                                 (use when both styles appear, or when unsure).
+                      Read the PDF visually to determine which applies. If a
+                      call returns 0 results, try a different drawing_type.
 
     Returns:
         Individual segment lengths in cm and total length in meters.
     """
+    if drawing_type not in ("fill", "stroke", "any"):
+        return f"Invalid drawing_type '{drawing_type}'. Use 'fill', 'stroke', or 'any'."
+
     supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
     if color.lower() not in supported:
         return f"Unknown color '{color}'. Supported: {', '.join(supported)}"
@@ -257,7 +297,11 @@ def get_wall_lengths_by_color(pdf_path: str, color: str) -> str:
         return f"File not found: {pdf_path}"
 
     doc = fitz.open(str(path))
-    page = doc[0]
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= len(doc):
+        doc.close()
+        return f"Page {page_number} out of range — PDF has {len(doc)} page(s)."
+    page = doc[page_idx]
 
     try:
         cm_per_unit = _calibrate(page)
@@ -270,10 +314,22 @@ def get_wall_lengths_by_color(pdf_path: str, color: str) -> str:
 
     for drawing in page.get_drawings():
         fill = drawing.get("fill")
-        if not fill or len(fill) < 3:
-            continue
-        if not _matches_color(fill, color):
-            continue
+        stroke = drawing.get("color")
+
+        if drawing_type == "fill":
+            if not fill or len(fill) < 3 or not _matches_color(fill, color):
+                continue
+        elif drawing_type == "stroke":
+            if not stroke or len(stroke) < 3 or not _matches_color(stroke, color):
+                continue
+            if fill and len(fill) >= 3 and _is_chromatic(fill):
+                continue  # has a solid chromatic fill — use drawing_type="fill" for these
+        else:  # "any"
+            fill_match = fill and len(fill) >= 3 and _matches_color(fill, color)
+            stroke_match = stroke and len(stroke) >= 3 and _matches_color(stroke, color)
+            if not fill_match and not stroke_match:
+                continue
+
         rect = drawing["rect"]
         if rect.x0 >= max_x:
             continue
@@ -285,11 +341,14 @@ def get_wall_lengths_by_color(pdf_path: str, color: str) -> str:
     doc.close()
 
     if not segments:
-        return f"No {color} wall segments found in the floor plan area."
+        return (
+            f"No {color} {drawing_type}-colored segments found in the floor plan area. "
+            f"If you expected results, try the other drawing_type."
+        )
 
     total_cm = sum(segments)
     total_m = total_cm / 100
     return (
-        f"{color} segments ({len(segments)} found): {sorted(segments)} cm\n"
+        f"{color} {drawing_type} segments ({len(segments)} found): {sorted(segments)} cm\n"
         f"Total: {total_m:.2f} m ({total_cm:.0f} cm)"
     )

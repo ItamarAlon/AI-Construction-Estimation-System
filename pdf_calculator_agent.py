@@ -3,7 +3,13 @@ import sys
 
 from langchain.tools import tool
 from construction_tasks_prices.read_construction_tasks_prices import get_task_price_tool
-from wall_measurement_tool import get_wall_lengths_by_color, count_outline_shapes_by_color
+from wall_measurement_tool import (
+    get_wall_lengths_by_color,
+    count_outline_shapes_by_color,
+    measure_total_length_by_coordinates,
+    list_colored_segments,
+    measure_segments_by_id,
+)
 
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.
@@ -38,71 +44,166 @@ model = ChatOpenAI(
     api_key=get_openrouter_api_key()
 )
 
+# ---------------------------------------------------------------------------
+# APPROACH C — select-by-ID geometry extraction (ACTIVE)
+# The tool extracts every real colored vector segment (exact lengths) and the
+# agent SELECTS which IDs belong to the task. The agent never produces
+# coordinates — it only outputs integer IDs, which it can do reliably.
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT_SELECT_IDS = (
+    "You are a construction cost estimator. "
+    "The user will give you a list of detected construction tasks and a PDF path. "
+    "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
+    "then calculate its cost accordingly:\n\n"
+
+    "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
+    "Always pass that page number to the tools (1-indexed, default 1). "
+    "If no page is specified, use page 1.\n\n"
+
+    "IF the task is measured in meters (e.g. wall demolition, wall construction, "
+    "pipe installation, lighting profiles — tasks drawn as lines or shapes on the plan):\n"
+    "  1. Call 'list_colored_segments' with the color of the task's elements. It returns "
+    "every colored segment with an ID, exact length, orientation, whether it is FILLED "
+    "(solid) or OUTLINE (stroke only), and its center position.\n"
+    "  2. Decide which IDs actually belong to this task. Read the PDF page to confirm. "
+    "Reason about the reported attributes — do NOT guess coordinates:\n"
+    "       • Walls are usually thin FILLED elongated segments.\n"
+    "       • Doors/window symbols are usually square or arc-shaped OUTLINE shapes "
+    "(these are a separate per-unit task, NOT wall length).\n"
+    "       • Long thin OUTLINE segments sitting away from walls are usually "
+    "dimension/leader lines — exclude them.\n"
+    "  3. Call 'measure_segments_by_id' with the same color/page and the chosen IDs "
+    "to get the total length in meters.\n"
+    "  4. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
+    "  5. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
+
+    "ELSE the task is per-unit (e.g. door demolition, kitchen demolition — discrete "
+    "countable items: doors, fixtures, rooms, labeled elements):\n"
+    "  1. If the items are colored outlines without fill (door arcs, window symbols), "
+    "call 'count_outline_shapes_by_color' with the stroke color. Sanity-check sizes — "
+    "door widths are typically 70–100 cm. If the items are rooms or labeled areas, read "
+    "the PDF and count them visually.\n"
+    "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
+    "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
+
+    "Report each task's quantity (meters or count), unit price, and total cost. "
+    "Finish with an overall grand total.\n\n"
+    "IMPORTANT: Do not write a final summary until you have called "
+    "'get_task_price' and 'multiply_numbers' for every task. "
+    "If tasks remain unpriced, your next output must be a tool call."
+)
+
+TOOLS_SELECT_IDS = [
+    get_task_price_tool,
+    multiply_numbers,
+    list_colored_segments,
+    measure_segments_by_id,
+    count_outline_shapes_by_color,
+]
+
+# ---------------------------------------------------------------------------
+# APPROACH A — coordinate-only (commented out)
+# Agent visually identifies every segment and passes coordinates directly.
+# NOTE: GPT-4o cannot ground coordinates from an image — it fabricates round
+# placeholder values — so this approach does not work in practice.
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT_COORDS_ONLY = (
+    "You are a construction cost estimator. "
+    "The user will give you a list of detected construction tasks and a PDF path. "
+    "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
+    "then calculate its cost accordingly:\n\n"
+
+    "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
+    "Always pass that page number to the tools — both tools accept a 'page_number' argument "
+    "(1-indexed, default 1). If no page is specified, use page 1.\n\n"
+
+    "IF the task is measured in meters (e.g. wall demolition, wall construction, "
+    "pipe installation, lighting profiles — tasks drawn as lines or shapes on the floor plan):\n"
+    "  1. Read the relevant PDF page visually. Identify every segment that belongs to this task.\n"
+    "  2. For each segment, estimate its start and end points as fractions of the page dimensions "
+    "(x=0.0 is the left edge, x=1.0 is the right edge; y=0.0 is the top edge, y=1.0 is the "
+    "bottom edge). Collect all segments as [[x1,y1,x2,y2], ...] pairs.\n"
+    "  3. Call 'measure_total_length_by_coordinates' ONCE with all segments for this task. "
+    "The tool sums them and returns the total in meters.\n"
+    "  4. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
+    "  5. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
+
+    "ELSE the task is per-unit (e.g. door demolition, kitchen demolition, bathroom renovation — "
+    "tasks that appear as discrete countable items: doors, fixtures, rooms, or labeled elements):\n"
+    "  1. If the items are drawn as colored outlines without fill (e.g. door arcs, window symbols), "
+    "call 'count_outline_shapes_by_color' with the PDF path and the stroke color of those items. "
+    "Sanity-check the returned sizes — door widths are typically 70–100 cm. "
+    "If the items are rooms or labeled areas, read the PDF visually and count them instead.\n"
+    "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
+    "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
+
+    "Report each task's quantity (meters or count), unit price, and total cost. "
+    "Finish with an overall grand total.\n\n"
+    "IMPORTANT: Do not write a final summary until you have called "
+    "'get_task_price' and 'multiply_numbers' for every task. "
+    "If tasks remain unpriced, your next output must be a tool call."
+)
+
+# TOOLS_COORDS_ONLY = [
+#     get_task_price_tool,
+#     multiply_numbers,
+#     measure_total_length_by_coordinates,
+#     count_outline_shapes_by_color,
+# ]
+
+# ---------------------------------------------------------------------------
+# APPROACH B — both color-based and coordinate-based tools (commented out)
+# Agent picks the right measurement approach per task.
+# ---------------------------------------------------------------------------
+
+# SYSTEM_PROMPT_BOTH_TOOLS = (
+#     "You are a construction cost estimator. "
+#     "The user will give you a list of detected construction tasks and a PDF path. "
+#     "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
+#     "then calculate its cost accordingly:\n\n"
+#
+#     "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
+#     "Always pass that page number to the tools — both tools accept a 'page_number' argument "
+#     "(1-indexed, default 1). If no page is specified, use page 1.\n\n"
+#
+#     "IF the task is measured in meters:\n"
+#     "  Choose ONE measurement approach and stick to it — do not use both for the same task:\n"
+#     "  OPTION 1 — color-based (efficient for uniform solid/stroke elements): "
+#     "Read the page and observe how the elements are drawn. "
+#     "Call 'get_wall_lengths_by_color' with the color and drawing_type "
+#     "('fill', 'stroke', or 'any'). If it returns 0 results, try a different drawing_type.\n"
+#     "  OPTION 2 — coordinate-based (for complex/composite/partial elements): "
+#     "Identify every segment visually, estimate start/end points as page-fraction coordinates "
+#     "(0.0–1.0), and call 'measure_total_length_by_coordinates' ONCE with all segments.\n"
+#     "  Then: call 'get_task_price' and 'multiply_numbers'.\n\n"
+#
+#     "ELSE the task is per-unit:\n"
+#     "  1. If items are colored outlines without fill, call 'count_outline_shapes_by_color'.\n"
+#     "     If items are rooms or labeled areas, count visually.\n"
+#     "  2. Call 'get_task_price' and 'multiply_numbers'.\n\n"
+#
+#     "Report each task's quantity, unit price, and total cost. "
+#     "Finish with an overall grand total.\n\n"
+#     "IMPORTANT: Do not write a final summary until every task is priced. "
+#     "If tasks remain unpriced, your next output must be a tool call."
+# )
+#
+# TOOLS_BOTH = [
+#     get_task_price_tool,
+#     multiply_numbers,
+#     get_wall_lengths_by_color,
+#     count_outline_shapes_by_color,
+#     measure_total_length_by_coordinates,
+# ]
+
+# ---------------------------------------------------------------------------
+
 agent = AgentBuilder(
     model=model,
-    tools=[get_task_price_tool, multiply_numbers, get_wall_lengths_by_color, count_outline_shapes_by_color],
-    system_prompt=(
-        "You are a construction cost estimator. "
-        "The user will give you a list of detected construction tasks and a PDF path. "
-        "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
-        "then calculate its cost accordingly:\n\n"
-        "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
-        "Always pass that page number to the tools — both tools accept a 'page_number' argument "
-        "(1-indexed, default 1). If no page is specified, use page 1.\n\n"
-        "IF the task is measured in meters (e.g. wall demolition, wall construction — "
-        "tasks that are drawn as colored lines on the floor plan):\n"
-        "  1. Read the relevant PDF page first and observe how the colored elements are drawn. "
-        "Then call 'get_wall_lengths_by_color' with the PDF path, the color, the correct "
-        "page_number, and the appropriate drawing_type: use 'fill' if the elements are solid "
-        "filled shapes, 'stroke' if they are outline-only, or 'any' if you are unsure or both "
-        "styles appear on the same page. If the tool returns 0 results, try a different "
-        "drawing_type.\n"
-        "  2. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
-        "  3. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
-        "ELSE the task is per-unit (e.g. door demolition, kitchen demolition, bathroom renovation — "
-        "tasks that appear as discrete countable items: doors, fixtures, rooms, or labeled elements):\n"
-        "  1. If the items are drawn as colored outlines without fill (e.g. door arcs, window symbols), "
-        "call 'count_outline_shapes_by_color' with the PDF path and the stroke color of those items. "
-        "This correctly detects unfilled shapes that get_wall_lengths_by_color would miss. "
-        "Sanity-check the returned sizes — door widths are typically 70–100 cm. "
-        "If the items are rooms or labeled areas, read the PDF visually and count them instead.\n"
-        "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-        "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
-        "Report each task's quantity (meters or count), unit price, and total cost. "
-        "Finish with an overall grand total.\n\n"
-        "IMPORTANT: Do not write a final summary until you have called "
-        "'get_task_price' and 'multiply_numbers' for every task. "
-        "If tasks remain unpriced, your next output must be a tool call."
-
-        # "You are a construction cost estimator. "
-        # "The user will give you a list of detected construction tasks and a PDF path. "
-        # "For each task, calculate its cost as follows:\n"
-        # "1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
-        # "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
-        # "then calculate its cost accordingly:\n\n"
-        # "IF the task is measured in meters (e.g. wall demolition, wall construction — "
-        # "tasks that are drawn as colored lines on the floor plan):\n"
-        # "  1. Call 'get_wall_lengths_by_color' with the PDF path and the wall color that "
-        # "corresponds to that task (e.g. 'yellow' for demolition, 'red' for new construction). "
-        # "This returns the exact total wall length in meters.\n"
-        #
-        #
-        # "2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-        # "3. Call 'multiply_numbers' to compute total cost = length × unit price.\n"
-        # "Report each task's total length, unit price, and cost. "
-        # "  2. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
-        # "  3. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
-        # "ELSE the task is per-unit (e.g. kitchen demolition, bathroom renovation — "
-        # "tasks that appear as discrete labeled items or rooms on the floor plan):\n"
-        # "  1. Read the PDF and count how many times that item appears on the map "
-        # "(e.g. 2 kitchens marked for destruction → count = 2).\n"
-        # "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-        # "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
-        # "Report each task's quantity (meters or count), unit price, and total cost. "
-        # "Finish with an overall grand total.\n\n"
-        # "IMPORTANT: Do not write a final summary until you have called "
-        # "'get_task_price' and 'multiply_numbers' for every task. "
-    )
+    tools=TOOLS_SELECT_IDS,
+    system_prompt=SYSTEM_PROMPT_SELECT_IDS,
 ).with_memory().pdf_reader().with_todos().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"

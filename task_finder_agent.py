@@ -50,9 +50,8 @@ agent = AgentBuilder(
 
         "It's also possible that none of the construction tasks returned from 'get_available_tasks' are presented in the pdf."
         "If that happens, return just an empty json"
-
     )
-).with_memory().pdf_reader().build()
+).pdf_reader().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
 

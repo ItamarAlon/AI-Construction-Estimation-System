@@ -1,5 +1,6 @@
 from pathlib import Path
 import colorsys
+import math
 import re
 import statistics
 from langchain.tools import tool
@@ -21,6 +22,20 @@ _MIN_SATURATION = 0.25  # below this, no dominant hue → treat as achromatic
 
 _MIN_UNITS = 10
 _PLAN_WIDTH_FRACTION = 0.70  # title blocks occupy the rightmost ~25-30% of the page
+
+# Short, collision-free color codes used to namespace segment IDs (e.g. "R3-5"
+# = red, page 3, index 5). "blue"/"black" and "gray"/"grey" must not collide.
+_COLOR_CODES: dict[str, str] = {
+    "red": "R", "orange": "O", "yellow": "Y", "green": "G",
+    "cyan": "C", "blue": "B", "magenta": "M", "purple": "P",
+    "black": "K", "white": "W", "gray": "GR", "grey": "GR",
+}
+
+
+def _namespace(color: str, page_number: int) -> str:
+    """Build the ID namespace for a (color, page) listing, e.g. ('red', 3) -> 'R3'."""
+    code = _COLOR_CODES.get(color.lower(), color.lower())
+    return f"{code}{page_number}"
 
 
 def _matches_color(fill: tuple, color_name: str) -> bool:
@@ -352,3 +367,279 @@ def get_wall_lengths_by_color(
         f"{color} {drawing_type} segments ({len(segments)} found): {sorted(segments)} cm\n"
         f"Total: {total_m:.2f} m ({total_cm:.0f} cm)"
     )
+
+
+@tool
+def measure_total_length_by_coordinates(
+    pdf_path: str,
+    segments: list[list[float]],
+    page_number: int = 1,
+) -> str:
+    """Measure the total real-world length of line segments defined by their coordinates.
+
+    Each segment is [x1, y1, x2, y2] where all values are fractions (0.0–1.0) of the
+    page dimensions (0.0 = left/top edge, 1.0 = right/bottom edge). The scale is read
+    automatically from the PDF title block (e.g. "1:100").
+
+    Pass ALL segments for a task in a single call — the tool sums them and returns the
+    total in meters plus a per-segment breakdown.
+
+    Use this tool when elements cannot be reliably identified by color alone — e.g.
+    dashed lines, composite symbols, partially-measured walls, or any case where you
+    need to reason visually about exactly which parts to measure.
+
+    Args:
+        pdf_path: path to the PDF file
+        segments: list of [x1, y1, x2, y2] coordinate pairs (normalized 0.0–1.0 fractions)
+        page_number: 1-indexed page number (default 1)
+
+    Returns:
+        Per-segment lengths in cm and grand total in meters.
+    """
+    path_obj = Path(pdf_path.strip("'\""))
+    if not path_obj.exists():
+        return f"File not found: {pdf_path}"
+
+    doc = fitz.open(str(path_obj))
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= len(doc):
+        doc.close()
+        return f"Page {page_number} out of range — PDF has {len(doc)} page(s)."
+    page = doc[page_idx]
+
+    try:
+        cm_per_unit = _calibrate(page)
+    except ValueError as e:
+        doc.close()
+        return f"Calibration failed: {e}"
+
+    w, h = page.rect.width, page.rect.height
+    doc.close()
+
+    results: list[float] = []
+    for seg in segments:
+        if len(seg) != 4:
+            return f"Each segment must have exactly 4 values [x1, y1, x2, y2]. Got: {seg}"
+        x1, y1, x2, y2 = seg
+        dx = (x2 - x1) * w
+        dy = (y2 - y1) * h
+        length_units = math.sqrt(dx * dx + dy * dy)
+        results.append(round(length_units * cm_per_unit, 1))
+
+    total_cm = sum(results)
+    lines = [f"  Segment {i + 1}: {r} cm" for i, r in enumerate(results)]
+    lines.append(f"Total: {round(total_cm / 100, 2)} m ({round(total_cm, 1)} cm)")
+    return "\n".join(lines)
+
+
+def _collect_colored_segments(page, color: str) -> list[dict]:
+    """Deterministic, ordered list of colored vector segments in the plan area.
+
+    Both list_colored_segments and measure_segments_by_id call this with the
+    same arguments, so a segment's position in the returned list (its ID) is
+    stable across the two calls. Identical/duplicate paths are merged, and a
+    segment is flagged 'filled' if any path at that location has a chromatic
+    fill of the target color (otherwise it is an outline/stroke).
+    """
+    max_x = page.rect.width * _PLAN_WIDTH_FRACTION
+    by_key: dict[tuple, dict] = {}
+    order: list[tuple] = []
+
+    for drawing in page.get_drawings():
+        fill = drawing.get("fill")
+        stroke = drawing.get("color")
+        fill_match = fill and len(fill) >= 3 and _matches_color(fill, color)
+        stroke_match = stroke and len(stroke) >= 3 and _matches_color(stroke, color)
+        if not (fill_match or stroke_match):
+            continue
+
+        rect = drawing["rect"]
+        if (rect.x0 + rect.x1) / 2 >= max_x:
+            continue
+        length_units = max(rect.width, rect.height)
+        if length_units < _MIN_UNITS:
+            continue
+
+        key = (round(rect.x0, 1), round(rect.y0, 1), round(rect.x1, 1), round(rect.y1, 1))
+        if key not in by_key:
+            by_key[key] = {"rect": rect, "length_units": length_units, "filled": bool(fill_match)}
+            order.append(key)
+        else:
+            by_key[key]["filled"] = by_key[key]["filled"] or bool(fill_match)
+
+    return [by_key[k] for k in order]
+
+
+def _describe_segment(seg: dict, page, cm_per_unit: float) -> dict:
+    rect = seg["rect"]
+    w, h = rect.width, rect.height
+    length_cm = round(seg["length_units"] * cm_per_unit, 1)
+    ratio = (w / h) if h > 0 else float("inf")
+    if ratio >= 3:
+        orient = "horizontal"
+    elif ratio <= 1 / 3:
+        orient = "vertical"
+    elif 0.5 <= ratio <= 2:
+        orient = "square (arc/symbol)"
+    else:
+        orient = "rectangular"
+    cx = round((rect.x0 + rect.x1) / 2 / page.rect.width * 100)
+    cy = round((rect.y0 + rect.y1) / 2 / page.rect.height * 100)
+    return {
+        "length_cm": length_cm,
+        "orient": orient,
+        "style": "FILLED" if seg["filled"] else "OUTLINE",
+        "cx": cx,
+        "cy": cy,
+    }
+
+
+@tool
+def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> str:
+    """List every colored vector segment of a given color in a PDF floor plan, each with an ID.
+
+    Reads the exact geometry from the PDF (no visual guessing). For each segment it
+    reports: an ID, its real length in cm, orientation, whether it is FILLED (solid)
+    or OUTLINE (stroke only), and its center position as a percentage of the page.
+
+    Use this to decide WHICH segments belong to a measurement task, then pass the
+    relevant IDs to 'measure_segments_by_id' to get their total length.
+
+    Each ID is namespaced by color and page (e.g. "R3-5" = red, page 3, segment 5),
+    so IDs from different colors or pages can never be mixed up. Always pass IDs
+    exactly as shown — including the prefix — to 'measure_segments_by_id'.
+
+    Guidance: thin FILLED elongated segments are usually walls; square/arc OUTLINE
+    shapes are usually doors or window symbols; long thin OUTLINE segments far from
+    walls are often dimension/leader lines (not real building elements).
+
+    Args:
+        pdf_path: Path to the PDF construction plan.
+        color: Color to list. Supported: red, orange, yellow, green, blue, cyan,
+               magenta, purple, black, white, gray.
+        page_number: 1-indexed page number to read (default 1 = first page).
+
+    Returns:
+        A numbered list of segments with length, orientation, style, and position.
+    """
+    supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
+    if color.lower() not in supported:
+        return f"Unknown color '{color}'. Supported: {', '.join(supported)}"
+
+    path_obj = Path(pdf_path.strip("'\""))
+    if not path_obj.exists():
+        return f"File not found: {pdf_path}"
+
+    doc = fitz.open(str(path_obj))
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= len(doc):
+        doc.close()
+        return f"Page {page_number} out of range — PDF has {len(doc)} page(s)."
+    page = doc[page_idx]
+
+    try:
+        cm_per_unit = _calibrate(page)
+    except ValueError as e:
+        doc.close()
+        return f"Calibration failed: {e}"
+
+    segs = _collect_colored_segments(page, color)
+    described = [_describe_segment(s, page, cm_per_unit) for s in segs]
+    doc.close()
+
+    if not described:
+        return f"No {color} segments found in the floor plan area."
+
+    ns = _namespace(color, page_number)
+    lines = [f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-'):"]
+    for i, d in enumerate(described):
+        lines.append(
+            f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} "
+            f"| center ({d['cx']}%,{d['cy']}%)"
+        )
+    lines.append(
+        f"\nSelect the IDs that belong to your task and pass them (with the '{ns}-' "
+        "prefix) to measure_segments_by_id."
+    )
+    return "\n".join(lines)
+
+
+@tool
+def measure_segments_by_id(
+    pdf_path: str, color: str, ids: list[str], page_number: int = 1
+) -> str:
+    """Sum the real-world length of the colored segments with the given IDs.
+
+    Pass the namespaced IDs exactly as reported by 'list_colored_segments'
+    (e.g. "R3-5"). The color and page_number must match the prefix of those IDs —
+    any ID belonging to a different color/page is rejected, so segments from
+    separate listings can never be summed together by mistake.
+
+    Args:
+        pdf_path: Path to the PDF construction plan.
+        color: Same color string passed to list_colored_segments.
+        ids: List of namespaced segment IDs (e.g. ["R3-5", "R3-6"]).
+        page_number: Same page_number passed to list_colored_segments (default 1).
+
+    Returns:
+        Per-segment lengths in cm and the grand total in meters.
+    """
+    path_obj = Path(pdf_path.strip("'\""))
+    if not path_obj.exists():
+        return f"File not found: {pdf_path}"
+
+    if not ids:
+        return "No IDs provided. Call list_colored_segments first, then pass the relevant IDs."
+
+    expected_ns = _namespace(color, page_number)
+
+    # Parse and validate every token before opening the PDF, so a mismatch is
+    # reported clearly rather than silently measuring the wrong segments.
+    indices: list[int] = []
+    for token in ids:
+        prefix, sep, idx_str = str(token).rpartition("-")
+        if not sep or not idx_str.isdigit():
+            return (
+                f"Malformed ID '{token}'. Use the exact IDs from list_colored_segments, "
+                f"e.g. '{expected_ns}-0'."
+            )
+        if prefix != expected_ns:
+            return (
+                f"ID '{token}' belongs to a different listing (namespace '{prefix}'), "
+                f"but this call is for {color} page {page_number} (namespace '{expected_ns}'). "
+                f"Only pass IDs prefixed '{expected_ns}-'. Re-run list_colored_segments "
+                f"for the segments you actually want."
+            )
+        indices.append(int(idx_str))
+
+    doc = fitz.open(str(path_obj))
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= len(doc):
+        doc.close()
+        return f"Page {page_number} out of range — PDF has {len(doc)} page(s)."
+    page = doc[page_idx]
+
+    try:
+        cm_per_unit = _calibrate(page)
+    except ValueError as e:
+        doc.close()
+        return f"Calibration failed: {e}"
+
+    segs = _collect_colored_segments(page, color)
+    doc.close()
+
+    lines = []
+    total_cm = 0.0
+    for token, i in zip(ids, indices):
+        if i < 0 or i >= len(segs):
+            return (
+                f"Invalid ID '{token}': only {len(segs)} {color} segment(s) exist on "
+                f"page {page_number} (valid IDs {expected_ns}-0 to {expected_ns}-{len(segs) - 1}). "
+                f"Re-run list_colored_segments."
+            )
+        length_cm = round(segs[i]["length_units"] * cm_per_unit, 1)
+        total_cm += length_cm
+        lines.append(f"  ID {token}: {length_cm} cm")
+
+    lines.append(f"Total: {round(total_cm / 100, 2)} m ({round(total_cm, 1)} cm)")
+    return "\n".join(lines)

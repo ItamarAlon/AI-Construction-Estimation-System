@@ -23,6 +23,17 @@ _MIN_SATURATION = 0.25  # below this, no dominant hue → treat as achromatic
 _MIN_UNITS = 10
 _PLAN_WIDTH_FRACTION = 0.70  # title blocks occupy the rightmost ~25-30% of the page
 
+# ---------------------------------------------------------------------------
+# "on-wall" attribute: fraction of a segment's centerline that runs along the
+# black architectural linework. High = sits on a building wall (likely a real
+# wall element); low = floats in open space (likely a dimension/leader line).
+# It is a noisy hint, not a classifier — flip _ON_WALL_ENABLED to False to
+# remove it entirely (no extra cost, no extra column) if it causes problems.
+# ---------------------------------------------------------------------------
+_ON_WALL_ENABLED = True
+_ON_WALL_THRESHOLD = 8.0   # PDF units; widened to tolerate offset wall-traces
+_ON_WALL_SAMPLES = 20      # points sampled along the segment centerline
+
 # Short, collision-free color codes used to namespace segment IDs (e.g. "R3-5"
 # = red, page 3, index 5). "blue"/"black" and "gray"/"grey" must not collide.
 _COLOR_CODES: dict[str, str] = {
@@ -470,7 +481,57 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
     return [by_key[k] for k in order]
 
 
-def _describe_segment(seg: dict, page, cm_per_unit: float) -> dict:
+def _is_black(color: tuple) -> bool:
+    return bool(color) and len(color) >= 3 and colorsys.rgb_to_hsv(*color[:3])[2] < 0.3
+
+
+def _collect_black_lines(page) -> list[tuple]:
+    """Extract the black architectural linework as (point, point) segments."""
+    lines: list[tuple] = []
+    for drawing in page.get_drawings():
+        if not _is_black(drawing.get("color")):
+            continue
+        for item in drawing["items"]:
+            if item[0] == "l":
+                lines.append((item[1], item[2]))
+            elif item[0] == "re":
+                r = item[1]
+                corners = [(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)]
+                for i in range(4):
+                    a, b = corners[i], corners[(i + 1) % 4]
+                    lines.append((fitz.Point(a), fitz.Point(b)))
+    return lines
+
+
+def _point_segment_distance(px: float, py: float, a, b) -> float:
+    dx, dy = b.x - a.x, b.y - a.y
+    len_sq = dx * dx + dy * dy
+    if len_sq == 0:
+        return math.hypot(px - a.x, py - a.y)
+    t = max(0.0, min(1.0, ((px - a.x) * dx + (py - a.y) * dy) / len_sq))
+    return math.hypot(px - (a.x + t * dx), py - (a.y + t * dy))
+
+
+def _on_wall_fraction(rect, black_lines: list[tuple]) -> float:
+    """Fraction of the segment centerline running within threshold of black linework."""
+    if not black_lines:
+        return 0.0
+    n = _ON_WALL_SAMPLES
+    if rect.width >= rect.height:
+        cy = (rect.y0 + rect.y1) / 2
+        points = [(rect.x0 + (rect.x1 - rect.x0) * k / (n - 1), cy) for k in range(n)]
+    else:
+        cx = (rect.x0 + rect.x1) / 2
+        points = [(cx, rect.y0 + (rect.y1 - rect.y0) * k / (n - 1)) for k in range(n)]
+    hits = sum(
+        1
+        for px, py in points
+        if any(_point_segment_distance(px, py, a, b) <= _ON_WALL_THRESHOLD for a, b in black_lines)
+    )
+    return hits / len(points)
+
+
+def _describe_segment(seg: dict, page, cm_per_unit: float, black_lines=None) -> dict:
     rect = seg["rect"]
     w, h = rect.width, rect.height
     length_cm = round(seg["length_units"] * cm_per_unit, 1)
@@ -485,13 +546,16 @@ def _describe_segment(seg: dict, page, cm_per_unit: float) -> dict:
         orient = "rectangular"
     cx = round((rect.x0 + rect.x1) / 2 / page.rect.width * 100)
     cy = round((rect.y0 + rect.y1) / 2 / page.rect.height * 100)
-    return {
+    described = {
         "length_cm": length_cm,
         "orient": orient,
         "style": "FILLED" if seg["filled"] else "OUTLINE",
         "cx": cx,
         "cy": cy,
     }
+    if _ON_WALL_ENABLED and black_lines is not None:
+        described["on_wall"] = round(_on_wall_fraction(rect, black_lines) * 100)
+    return described
 
 
 @tool
@@ -512,6 +576,12 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     Guidance: thin FILLED elongated segments are usually walls; square/arc OUTLINE
     shapes are usually doors or window symbols; long thin OUTLINE segments far from
     walls are often dimension/leader lines (not real building elements).
+
+    When available, each segment also reports 'on-wall N%' — how much of it runs
+    along the building's architectural linework. High (~80-100%) means it sits on a
+    real wall; low (~0-20%) on a long segment usually means a dimension/leader line.
+    Treat it as a hint, not a rule — colored wall-traces can be drawn slightly
+    offset and score in the middle.
 
     Args:
         pdf_path: Path to the PDF construction plan.
@@ -544,7 +614,8 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
         return f"Calibration failed: {e}"
 
     segs = _collect_colored_segments(page, color)
-    described = [_describe_segment(s, page, cm_per_unit) for s in segs]
+    black_lines = _collect_black_lines(page) if _ON_WALL_ENABLED else None
+    described = [_describe_segment(s, page, cm_per_unit, black_lines) for s in segs]
     doc.close()
 
     if not described:
@@ -553,9 +624,10 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     ns = _namespace(color, page_number)
     lines = [f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-'):"]
     for i, d in enumerate(described):
+        on_wall = f" | on-wall {d['on_wall']}%" if "on_wall" in d else ""
         lines.append(
             f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} "
-            f"| center ({d['cx']}%,{d['cy']}%)"
+            f"| center ({d['cx']}%,{d['cy']}%){on_wall}"
         )
     lines.append(
         f"\nSelect the IDs that belong to your task and pass them (with the '{ns}-' "

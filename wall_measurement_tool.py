@@ -714,8 +714,8 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     return "\n".join(lines)
 
 
-@tool
-def measure_segments_by_id(
+@tool(name_or_callable="measure_segments_by_id")
+def measure_segments_by_id_tool(
     pdf_path: str, color: str, ids: list[str], page_number: int = 1
 ) -> str:
     """Sum the real-world length of the colored segments with the given IDs.
@@ -734,6 +734,12 @@ def measure_segments_by_id(
     Returns:
         Per-segment lengths in cm and the grand total in meters.
     """
+    return measure_segments_by_id(pdf_path, color, ids, page_number)
+
+
+def measure_segments_by_id(
+    pdf_path: str, color: str, ids: list[str], page_number: int = 1
+) -> str:
     path_obj = Path(pdf_path.strip("'\""))
     if not path_obj.exists():
         return f"File not found: {pdf_path}"

@@ -3,7 +3,6 @@ import sys
 
 from langchain.tools import tool
 from construction_tasks_prices.read_construction_tasks_prices import (
-    get_task_price_tool,
     get_available_tasks_tool,
 )
 from wall_measurement_tool import (
@@ -11,7 +10,6 @@ from wall_measurement_tool import (
     count_outline_shapes_by_color,
     measure_total_length_by_coordinates,
     list_colored_segments,
-    measure_segments_by_id,
 )
 
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
@@ -106,35 +104,30 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "  - Genuinely uncertain -> tag 'ignore (uncertain)' with a reason; do not guess.\n\n"
     "Do not call 'measure_segments_by_id' until the classification table is complete.\n\n"
 
-    "--- PHASE 3: MEASURE ---\n"
-    "For each per-meter task that has segments assigned to it, call 'measure_segments_by_id' "
-    "with (color, page, IDs tagged to that task) to get its total length in meters.\n\n"
-
     "--- PER-UNIT TASKS (doors, fixtures, rooms -- discrete countable items) ---\n"
     "These bypass Phases 1-3:\n"
     "  If items are colored outlines without fill (door arcs, window symbols), "
     "call 'count_outline_shapes_by_color'. Sanity-check sizes -- door widths are 70-100 cm. "
     "If items are rooms or labeled areas, read the PDF and count visually.\n\n"
 
-    "--- FINAL OUTPUT (quantities only -- do NOT price anything) ---\n"
-    "You do NOT have access to prices and you must NOT compute any cost. A separate program "
-    "prices the quantities you report. After detecting and measuring every task:\n"
-    "  1. Restate the Phase 0 detected-task list and the Phase 2 classification table(s).\n"
-    "  2. End your message with a single JSON object mapping each EXACT task name (as returned "
-    "by 'get_available_tasks', including any '(per meter)' suffix) to its measured quantity "
-    "(meters for per-meter tasks, integer count for per-unit tasks). Put it in a ```json code "
-    "block as the LAST thing in your message. Example:\n"
+    "--- FINAL OUTPUT (segment assignments only -- do NOT measure or price) ---\n"
+    "You do NOT call 'measure_segments_by_id'. A separate node handles measurement after you. "
+    "After Phase 0-2 and per-unit counting, end with a single JSON object in a ```json code "
+    "block as the LAST thing in your message:\n"
+    "  - Per-meter tasks: task name -> {\"color\": \"<color>\", \"page\": <n>, \"ids\": [\"<id>\", ...]}\n"
+    "  - Per-unit tasks:  task name -> {\"count\": <integer>}\n"
+    "Example:\n"
     "```json\n"
-    "{\"Wall Demolition (per meter)\": 3.58, \"Door Demolition\": 8}\n"
+    "{\"Wall Demolition (per meter)\": {\"color\": \"yellow\", \"page\": 1, \"ids\": [\"Y1-0\", \"Y1-2\"]}, "
+    "\"Door Demolition\": {\"count\": 8}}\n"
     "```\n"
-    "Only include tasks you actually found. Use numbers, not strings. Report the quantity once "
-    "per task -- do not double-count duplicate ('dup-of') segments."
+    "Use the EXACT task name from 'get_available_tasks'. Only include tasks you found. "
+    "Do not include 'dup-of' IDs — those are already handled by the measurement node."
 )
 
 TOOLS_SELECT_IDS = [
     get_available_tasks_tool,
     list_colored_segments,
-    measure_segments_by_id,
     count_outline_shapes_by_color,
 ]
 

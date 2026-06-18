@@ -54,7 +54,12 @@ model = ChatOpenAI(
 
 SYSTEM_PROMPT_SELECT_IDS = (
     "You are a construction cost estimator. "
-    "The user will give you a PDF path (the plan images are included in the message). "
+    "The user message gives you a PDF path (the plan images are included) and a "
+    "DETECTED COLOR PALETTE: the exact hex codes actually used by the plan's linework, "
+    "per page, each with a rough color name and segment count. When you call "
+    "'list_colored_segments' or refer to a color, pass the EXACT hex code from that "
+    "palette (e.g. '#e6f00a'), not a guessed color name — the hex is precise, the "
+    "rendered image is not. "
     "You must FIRST detect which construction tasks appear on the plan, then cost each one.\n\n"
 
     "--- PHASE 0: DETECT TASKS ---\n"
@@ -72,8 +77,9 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "Always pass the task's page number to the tools (1-indexed, default 1 if unsure).\n\n"
 
     "--- PHASE 1: ENUMERATE ---\n"
-    "For every per-meter task on a page, call 'list_colored_segments' with its color "
-    "and page number. If two tasks share the same color and page, one call covers both.\n\n"
+    "For every per-meter task on a page, call 'list_colored_segments' with its hex color "
+    "(from the palette) and page number. If two tasks share the same color and page, one "
+    "call covers both. The 'color' in your final JSON must be that same hex code.\n\n"
 
     "--- PHASE 2: CLASSIFY (required before any measurement call) ---\n"
     "After receiving the segment listing, output a classification table that covers "

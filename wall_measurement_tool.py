@@ -55,9 +55,30 @@ _COLOR_CODES: dict[str, str] = {
 }
 
 
+def _parse_hex(color: str):
+    """Parse '#RRGGBB' (or 'RRGGBB') into an (r, g, b) tuple of 0-1 floats, or None."""
+    s = color.strip().lstrip("#")
+    if len(s) != 6:
+        return None
+    try:
+        r, g, b = (int(s[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return None
+    return (r, g, b)
+
+
 def _namespace(color: str, page_number: int) -> str:
-    """Build the ID namespace for a (color, page) listing, e.g. ('red', 3) -> 'R3'."""
-    code = _COLOR_CODES.get(color.lower(), color.lower())
+    """Build the ID namespace for a (color, page) listing.
+
+    Named colors get a short code ('red',3 -> 'R3'); a hex target gets a stable
+    code from its digits ('#e6f00a',1 -> 'XE6F00A1') so IDs never collide with
+    the single-letter named codes and stay consistent between list/measure.
+    """
+    hex_rgb = _parse_hex(color)
+    if hex_rgb is not None:
+        code = "X" + color.strip().lstrip("#").upper()
+    else:
+        code = _COLOR_CODES.get(color.lower(), color.lower())
     return f"{code}{page_number}"
 
 
@@ -65,6 +86,20 @@ def _matches_color(fill: tuple, color_name: str) -> bool:
     r, g, b = fill[0], fill[1], fill[2]
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
     h_deg = h * 360
+
+    # A hex target: match by hue within tolerance (saturated), or by
+    # value/saturation for achromatic targets — same logic as named colors,
+    # but the target comes from the agent instead of the fixed table.
+    hex_rgb = _parse_hex(color_name)
+    if hex_rgb is not None:
+        th, ts, tv = colorsys.rgb_to_hsv(*hex_rgb)
+        if ts < _MIN_SATURATION:  # achromatic target (black/white/gray-ish)
+            return s < _MIN_SATURATION and abs(v - tv) <= 0.2
+        if s < _MIN_SATURATION:
+            return False
+        diff = min(abs(h_deg - th * 360), 360 - abs(h_deg - th * 360))
+        return diff <= _HUE_TOLERANCE
+
     color_name = color_name.lower()
 
     if color_name in _HUE_TARGETS:
@@ -217,8 +252,11 @@ def count_outline_shapes_by_color(pdf_path: str, color: str, page_number: int = 
         Count of distinct shapes and their estimated sizes in cm.
     """
     supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
-    if color.lower() not in supported:
-        return f"Unknown color '{color}'. Supported: {', '.join(supported)}"
+    if color.lower() not in supported and _parse_hex(color) is None:
+        return (
+            f"Unknown color '{color}'. Pass a hex code like '#e6f00a', or one of: "
+            f"{', '.join(supported)}"
+        )
 
     path_obj = Path(pdf_path.strip("'\""))
     if not path_obj.exists():
@@ -327,8 +365,11 @@ def get_wall_lengths_by_color(
         return f"Invalid drawing_type '{drawing_type}'. Use 'fill', 'stroke', or 'any'."
 
     supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
-    if color.lower() not in supported:
-        return f"Unknown color '{color}'. Supported: {', '.join(supported)}"
+    if color.lower() not in supported and _parse_hex(color) is None:
+        return (
+            f"Unknown color '{color}'. Pass a hex code like '#e6f00a', or one of: "
+            f"{', '.join(supported)}"
+        )
 
     path = Path(pdf_path.strip("'\""))
     if not path.exists():
@@ -649,16 +690,21 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
 
     Args:
         pdf_path: Path to the PDF construction plan.
-        color: Color to list. Supported: red, orange, yellow, green, blue, cyan,
-               magenta, purple, black, white, gray.
+        color: Color to list. Either a hex code like '#e6f00a' (recommended —
+               use the exact hex from the detected color palette), or a named
+               color: red, orange, yellow, green, blue, cyan, magenta, purple,
+               black, white, gray.
         page_number: 1-indexed page number to read (default 1 = first page).
 
     Returns:
         A numbered list of segments with length, orientation, style, and position.
     """
     supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
-    if color.lower() not in supported:
-        return f"Unknown color '{color}'. Supported: {', '.join(supported)}"
+    if color.lower() not in supported and _parse_hex(color) is None:
+        return (
+            f"Unknown color '{color}'. Pass a hex code like '#e6f00a', or one of: "
+            f"{', '.join(supported)}"
+        )
 
     path_obj = Path(pdf_path.strip("'\""))
     if not path_obj.exists():

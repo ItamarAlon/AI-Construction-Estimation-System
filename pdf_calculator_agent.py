@@ -107,32 +107,32 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "Do not call 'measure_segments_by_id' until the classification table is complete.\n\n"
 
     "--- PHASE 3: MEASURE ---\n"
-    "For each task that has segments assigned to it:\n"
-    "  1. Call 'measure_segments_by_id' with (color, page, IDs tagged to that task).\n"
-    "  2. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
-    "  3. Call 'multiply_numbers' to compute total cost = length x unit price.\n\n"
+    "For each per-meter task that has segments assigned to it, call 'measure_segments_by_id' "
+    "with (color, page, IDs tagged to that task) to get its total length in meters.\n\n"
 
     "--- PER-UNIT TASKS (doors, fixtures, rooms -- discrete countable items) ---\n"
     "These bypass Phases 1-3:\n"
-    "  1. If items are colored outlines without fill (door arcs, window symbols), "
+    "  If items are colored outlines without fill (door arcs, window symbols), "
     "call 'count_outline_shapes_by_color'. Sanity-check sizes -- door widths are 70-100 cm. "
-    "If items are rooms or labeled areas, read the PDF and count visually.\n"
-    "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-    "  3. Call 'multiply_numbers' to compute total cost = count x unit price.\n\n"
+    "If items are rooms or labeled areas, read the PDF and count visually.\n\n"
 
-    "--- FINAL REPORT ---\n"
-    "First restate the Phase 0 detected-task list. Then for every task show: the Phase 2 "
-    "classification table, the measured quantity (meters or count), the unit price, and the "
-    "total cost. End with a grand total.\n\n"
-    "IMPORTANT: Do not write the final summary until 'get_task_price' and "
-    "'multiply_numbers' have been called for every task. "
-    "If any task is unpriced, your next output must be a tool call."
+    "--- FINAL OUTPUT (quantities only -- do NOT price anything) ---\n"
+    "You do NOT have access to prices and you must NOT compute any cost. A separate program "
+    "prices the quantities you report. After detecting and measuring every task:\n"
+    "  1. Restate the Phase 0 detected-task list and the Phase 2 classification table(s).\n"
+    "  2. End your message with a single JSON object mapping each EXACT task name (as returned "
+    "by 'get_available_tasks', including any '(per meter)' suffix) to its measured quantity "
+    "(meters for per-meter tasks, integer count for per-unit tasks). Put it in a ```json code "
+    "block as the LAST thing in your message. Example:\n"
+    "```json\n"
+    "{\"Wall Demolition (per meter)\": 3.58, \"Door Demolition\": 8}\n"
+    "```\n"
+    "Only include tasks you actually found. Use numbers, not strings. Report the quantity once "
+    "per task -- do not double-count duplicate ('dup-of') segments."
 )
 
 TOOLS_SELECT_IDS = [
     get_available_tasks_tool,
-    get_task_price_tool,
-    multiply_numbers,
     list_colored_segments,
     measure_segments_by_id,
     count_outline_shapes_by_color,

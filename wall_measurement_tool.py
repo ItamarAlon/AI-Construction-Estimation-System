@@ -34,6 +34,18 @@ _ON_WALL_ENABLED = True
 _ON_WALL_THRESHOLD = 8.0   # PDF units; widened to tolerate offset wall-traces
 _ON_WALL_SAMPLES = 20      # points sampled along the segment centerline
 
+# ---------------------------------------------------------------------------
+# Duplicate-trace detection: walls are often drawn as two parallel strokes (a
+# double line) or a closed rectangle, so one physical wall can surface as two
+# near-identical segments. Counting both doubles its length. We group such
+# near-duplicates deterministically: list_colored_segments flags the extras as
+# "dup-of <id>", and measure_segments_by_id counts each group only once as a
+# safety net. Flip _DUP_ENABLED to False to disable entirely.
+# ---------------------------------------------------------------------------
+_DUP_ENABLED = True
+_DUP_LENGTH_TOL = 0.08   # max relative length difference within a group
+_DUP_CENTER_TOL = 0.04   # max center offset as a fraction of page width/height
+
 # Short, collision-free color codes used to namespace segment IDs (e.g. "R3-5"
 # = red, page 3, index 5). "blue"/"black" and "gray"/"grey" must not collide.
 _COLOR_CODES: dict[str, str] = {
@@ -481,6 +493,58 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
     return [by_key[k] for k in order]
 
 
+def _duplicate_canonical(segs: list[dict], page) -> list[int]:
+    """Map each segment index to its group's representative (lowest) index.
+
+    Two segments are treated as the same physical element when they share
+    orientation, have lengths within _DUP_LENGTH_TOL, and centers within
+    _DUP_CENTER_TOL of the page size — i.e. the two parallel strokes of a
+    double-line wall. The representative of a group is its lowest index;
+    every other member points back to it. With detection off (or fewer than
+    two segments) each index maps to itself, so callers behave as before.
+    """
+    n = len(segs)
+    canonical = list(range(n))
+    if not _DUP_ENABLED or n < 2:
+        return canonical
+
+    w, h = page.rect.width, page.rect.height
+    centers = []
+    for s in segs:
+        r = s["rect"]
+        long_side, short_side = max(r.width, r.height), min(r.width, r.height)
+        # Elongated = much longer than thick (a wall edge). Multiplicative form
+        # avoids dividing by a zero short side: a pure axis-aligned line has a
+        # zero-width bbox, which must still count as elongated. Square arcs /
+        # symbols (long ≈ short) fail this and are excluded from dedup.
+        elongated = long_side >= 3 * short_side
+        centers.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, r.width >= r.height, elongated))
+
+    for i in range(n):
+        if canonical[i] != i:
+            continue
+        cxi, cyi, horiz_i, elong_i = centers[i]
+        if not elong_i:
+            continue  # only elongated runs (wall edges) can be double-line duplicates;
+            #            square arcs / symbols are never a duplicate trace of a wall
+        li = segs[i]["length_units"]
+        for j in range(i + 1, n):
+            if canonical[j] != j:
+                continue
+            cxj, cyj, horiz_j, elong_j = centers[j]
+            if not elong_j or horiz_j != horiz_i:
+                continue
+            lj = segs[j]["length_units"]
+            if abs(li - lj) / max(li, lj) > _DUP_LENGTH_TOL:
+                continue
+            if abs(cxi - cxj) > _DUP_CENTER_TOL * w:
+                continue
+            if abs(cyi - cyj) > _DUP_CENTER_TOL * h:
+                continue
+            canonical[j] = i
+    return canonical
+
+
 def _is_black(color: tuple) -> bool:
     return bool(color) and len(color) >= 3 and colorsys.rgb_to_hsv(*color[:3])[2] < 0.3
 
@@ -616,6 +680,7 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     segs = _collect_colored_segments(page, color)
     black_lines = _collect_black_lines(page) if _ON_WALL_ENABLED else None
     described = [_describe_segment(s, page, cm_per_unit, black_lines) for s in segs]
+    canonical = _duplicate_canonical(segs, page)
     doc.close()
 
     if not described:
@@ -623,11 +688,24 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
 
     ns = _namespace(color, page_number)
     lines = [f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-'):"]
+    has_dups = False
     for i, d in enumerate(described):
         on_wall = f" | on-wall {d['on_wall']}%" if "on_wall" in d else ""
+        if canonical[i] != i:
+            dup = f" | dup-of {ns}-{canonical[i]}"
+            has_dups = True
+        else:
+            dup = ""
         lines.append(
             f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} "
-            f"| center ({d['cx']}%,{d['cy']}%){on_wall}"
+            f"| center ({d['cx']}%,{d['cy']}%){on_wall}{dup}"
+        )
+    if has_dups:
+        lines.append(
+            "\nNote: segments marked 'dup-of <id>' are a second trace of the same "
+            "physical element (e.g. the other edge of a double-line wall). Assign only "
+            "the referenced <id> to a task and ignore the duplicate, or you will "
+            "double-count its length."
         )
     lines.append(
         f"\nSelect the IDs that belong to your task and pass them (with the '{ns}-' "
@@ -698,10 +776,11 @@ def measure_segments_by_id(
         return f"Calibration failed: {e}"
 
     segs = _collect_colored_segments(page, color)
+    canonical = _duplicate_canonical(segs, page)
     doc.close()
 
-    lines = []
-    total_cm = 0.0
+    # Range-check every requested index before summing, so a bad ID is reported
+    # clearly instead of silently skewing the total.
     for token, i in zip(ids, indices):
         if i < 0 or i >= len(segs):
             return (
@@ -709,9 +788,27 @@ def measure_segments_by_id(
                 f"page {page_number} (valid IDs {expected_ns}-0 to {expected_ns}-{len(segs) - 1}). "
                 f"Re-run list_colored_segments."
             )
+
+    lines = []
+    total_cm = 0.0
+    seen_reps: dict[int, str] = {}   # group representative -> first ID that counted it
+    for token, i in zip(ids, indices):
         length_cm = round(segs[i]["length_units"] * cm_per_unit, 1)
+        rep = canonical[i]
+        if rep in seen_reps:
+            lines.append(
+                f"  ID {token}: {length_cm} cm  -- SKIPPED (duplicate trace of "
+                f"{seen_reps[rep]}; counted once to avoid double-counting)"
+            )
+            continue
+        seen_reps[rep] = token
         total_cm += length_cm
         lines.append(f"  ID {token}: {length_cm} cm")
 
     lines.append(f"Total: {round(total_cm / 100, 2)} m ({round(total_cm, 1)} cm)")
+    if len(seen_reps) < len(indices):
+        lines.append(
+            "Note: some selected IDs were duplicate traces of the same physical "
+            "element and were counted only once."
+        )
     return "\n".join(lines)

@@ -45,53 +45,74 @@ model = ChatOpenAI(
 )
 
 # ---------------------------------------------------------------------------
-# APPROACH C — select-by-ID geometry extraction (ACTIVE)
-# The tool extracts every real colored vector segment (exact lengths) and the
-# agent SELECTS which IDs belong to the task. The agent never produces
-# coordinates — it only outputs integer IDs, which it can do reliably.
+# APPROACH C — select-by-ID with mandatory classify-then-measure (ACTIVE)
+# The tool enumerates every colored segment; the agent must tag ALL of them to
+# a task (or "ignore") before measuring any. This forces deliberate per-segment
+# reasoning and makes every selection visible and auditable in the trace.
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT_SELECT_IDS = (
     "You are a construction cost estimator. "
     "The user will give you a list of detected construction tasks and a PDF path. "
-    "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
-    "then calculate its cost accordingly:\n\n"
+    "Work in three phases for per-meter tasks. Per-unit tasks skip to the end.\n\n"
 
     "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
     "Always pass that page number to the tools (1-indexed, default 1). "
     "If no page is specified, use page 1.\n\n"
 
-    "IF the task is measured in meters (e.g. wall demolition, wall construction, "
-    "pipe installation, lighting profiles — tasks drawn as lines or shapes on the plan):\n"
-    "  1. Call 'list_colored_segments' with the color of the task's elements. It returns "
-    "every colored segment with an ID, exact length, orientation, whether it is FILLED "
-    "(solid) or OUTLINE (stroke only), and its center position.\n"
-    "  2. Decide which IDs actually belong to this task. Read the PDF page to confirm. "
-    "Reason about the reported attributes — do NOT guess coordinates:\n"
-    "       • Walls are usually thin FILLED elongated segments.\n"
-    "       • Doors/window symbols are usually square or arc-shaped OUTLINE shapes "
-    "(these are a separate per-unit task, NOT wall length).\n"
-    "       • Long thin OUTLINE segments sitting away from walls are usually "
-    "dimension/leader lines — exclude them.\n"
-    "  3. Call 'measure_segments_by_id' with the same color/page and the chosen IDs "
-    "to get the total length in meters.\n"
-    "  4. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
-    "  5. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
+    "--- PHASE 1: ENUMERATE ---\n"
+    "For every per-meter task on a page, call 'list_colored_segments' with its color "
+    "and page number. If two tasks share the same color and page, one call covers both.\n\n"
 
-    "ELSE the task is per-unit (e.g. door demolition, kitchen demolition — discrete "
-    "countable items: doors, fixtures, rooms, labeled elements):\n"
-    "  1. If the items are colored outlines without fill (door arcs, window symbols), "
-    "call 'count_outline_shapes_by_color' with the stroke color. Sanity-check sizes — "
-    "door widths are typically 70–100 cm. If the items are rooms or labeled areas, read "
-    "the PDF and count them visually.\n"
+    "--- PHASE 2: CLASSIFY (required before any measurement call) ---\n"
+    "After receiving the segment listing, output a classification table that covers "
+    "EVERY segment — no segment may be skipped. One line per segment:\n\n"
+    "  ID <ns>-<i>  ->  <task name or 'ignore'>  [<one-line reason>]\n\n"
+    "Example:\n"
+    "  ID R2-0   ->  Wall Demolition  [vertical, on-wall 100% -- traces a real wall edge]\n"
+    "  ID R2-11  ->  ignore           [duplicate of R2-0: same length & center -- 2nd edge of same wall]\n"
+    "  ID R2-1   ->  ignore           [on-wall 10% -- floats off the walls, dimension line]\n\n"
+    "How to read the attributes (they describe the vector geometry, not the task):\n"
+    "  - 'on-wall N%' is the STRONGEST signal: the share of the segment running along the "
+    "building's black walls. HIGH (>=60%) = it traces a real wall edge -> assign to the task. "
+    "LOW (<25%) on a long segment = it floats in open space -> dimension/leader line -> ignore.\n"
+    "  - Orientation: 'horizontal'/'vertical' is an elongated run (typical wall edge). "
+    "'square (arc/symbol)' that is SMALL (~50-110 cm) is a door/window symbol -> ignore (it may "
+    "be a separate per-unit task, not wall length). A LARGE 'square' (>150 cm) is usually a "
+    "corner or diagonal wall run, not a symbol -- judge it by on-wall and the PDF.\n"
+    "  - FILLED vs OUTLINE is only a WEAK hint. Walls may be drawn either way depending on the "
+    "plan (some plans draw every wall as an OUTLINE), so do NOT reject a segment just because "
+    "it is OUTLINE.\n"
+    "  - DUPLICATES: a wall drawn as a double line surfaces as two near-identical segments. "
+    "The listing flags the extra one as 'dup-of <id>'. Assign only the referenced <id> to the "
+    "task and tag every 'dup-of' segment 'ignore (duplicate of <id>)' -- counting both DOUBLES "
+    "the length. (The measurement tool also collapses such groups as a safety net, but your "
+    "table must still tag them correctly.)\n"
+    "  - If several tasks share the color, use each segment's position and the PDF to decide "
+    "which task it belongs to.\n"
+    "  - Genuinely uncertain -> tag 'ignore (uncertain)' with a reason; do not guess.\n\n"
+    "Do not call 'measure_segments_by_id' until the classification table is complete.\n\n"
+
+    "--- PHASE 3: MEASURE ---\n"
+    "For each task that has segments assigned to it:\n"
+    "  1. Call 'measure_segments_by_id' with (color, page, IDs tagged to that task).\n"
+    "  2. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
+    "  3. Call 'multiply_numbers' to compute total cost = length x unit price.\n\n"
+
+    "--- PER-UNIT TASKS (doors, fixtures, rooms -- discrete countable items) ---\n"
+    "These bypass Phases 1-3:\n"
+    "  1. If items are colored outlines without fill (door arcs, window symbols), "
+    "call 'count_outline_shapes_by_color'. Sanity-check sizes -- door widths are 70-100 cm. "
+    "If items are rooms or labeled areas, read the PDF and count visually.\n"
     "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-    "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
+    "  3. Call 'multiply_numbers' to compute total cost = count x unit price.\n\n"
 
-    "Report each task's quantity (meters or count), unit price, and total cost. "
-    "Finish with an overall grand total.\n\n"
-    "IMPORTANT: Do not write a final summary until you have called "
-    "'get_task_price' and 'multiply_numbers' for every task. "
-    "If tasks remain unpriced, your next output must be a tool call."
+    "--- FINAL REPORT ---\n"
+    "For every task show: the Phase 2 classification table, the measured quantity "
+    "(meters or count), the unit price, and the total cost. End with a grand total.\n\n"
+    "IMPORTANT: Do not write the final summary until 'get_task_price' and "
+    "'multiply_numbers' have been called for every task. "
+    "If any task is unpriced, your next output must be a tool call."
 )
 
 TOOLS_SELECT_IDS = [

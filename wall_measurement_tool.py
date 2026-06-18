@@ -47,6 +47,12 @@ _DUP_ENABLED = True
 _DUP_LENGTH_TOL = 0.08   # max relative length difference within a group
 _DUP_CENTER_TOL = 0.04   # max center offset as a fraction of page width/height
 
+# Black is usually the plan's base drawing color (walls, text, dimensions, grid),
+# not a task-specific layer. When False, list_colored_segments refuses black so
+# the agent never tries to classify the whole base map. Flip to True for the rare
+# plan where black is a genuine task color.
+_LIST_BLACK_SEGMENTS = False
+
 # Short, collision-free color codes used to namespace segment IDs (e.g. "R3-5"
 # = red, page 3, index 5). "blue"/"black" and "gray"/"grey" must not collide.
 _COLOR_CODES: dict[str, str] = {
@@ -780,6 +786,14 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> li
         return (
             f"Unknown color '{color}'. Pass a hex code like '#e6f00a', or one of: "
             f"{', '.join(supported)}"
+        )
+
+    hex_rgb = _parse_hex(color)
+    is_black = color.lower() == "black" or (hex_rgb is not None and max(hex_rgb) < 0.2)
+    if is_black and not _LIST_BLACK_SEGMENTS:
+        return (
+            "Black is the plan's base drawing color (walls, text, dimensions, grid), not a "
+            "task layer, so it is not listed. Pick a task-specific color from the palette instead."
         )
 
     path_obj = Path(pdf_path.strip("'\""))

@@ -15,6 +15,7 @@ from wall_measurement_tool import (
     _MIN_UNITS,
     _MIN_SATURATION,
     _HUE_TARGETS,
+    _LIST_BLACK_SEGMENTS,
 )
 
 # Chromatic colors within this many hue degrees are treated as one cluster.
@@ -88,6 +89,10 @@ def list_present_colors(pdf_path: str, page_number: int = 1) -> list[dict]:
     for c in clusters.values():
         n = c["count"]
         r, g, b = c["r"] / n, c["g"] / n, c["b"] / n
+        # Black is the base drawing color, not a task layer — omit it so the agent
+        # never picks it (mirrors _LIST_BLACK_SEGMENTS in wall_measurement_tool).
+        if not _LIST_BLACK_SEGMENTS and max(r, g, b) < 0.2:
+            continue
         palette.append({
             "hex": _to_hex(r, g, b),
             "approx_name": _approx_name(r, g, b),

@@ -81,6 +81,11 @@ class AgentBuilder:
         self.__add_middleware(pdf_injection_middleware)
         return self
 
+    def tool_images(self):
+        from helpers.tool_image_middleware import relocate_tool_images
+        self.__add_middleware(relocate_tool_images)
+        return self
+
     def with_todos(self):
         from langchain.agents.middleware import TodoListMiddleware
         self.__add_middleware(TodoListMiddleware())

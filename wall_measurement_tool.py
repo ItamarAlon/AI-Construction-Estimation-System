@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 import colorsys
 import math
 import re
@@ -322,7 +323,18 @@ def count_outline_shapes_by_color(pdf_path: str, color: str, page_number: int = 
     count = len(clusters)
     sizes_cm = sorted(round(max(c.width, c.height) * cm_per_unit) for c in clusters)
 
+    hex_rgb = _parse_hex(color)
+    is_black = color.lower() == "black" or (hex_rgb is not None and max(hex_rgb) < 0.2)
+    warning = ""
+    if is_black:
+        warning = (
+            "WARNING: black is usually the plan's base drawing color (walls, text, "
+            "dimensions, grid) -- a count of black outlines is almost never a real item "
+            "count. Only trust this if black is genuinely a dedicated task symbol on THIS "
+            "plan; otherwise do NOT count it.\n"
+        )
     return (
+        f"{warning}"
         f"Found {count} distinct {color} outline shape(s) in the floor plan.\n"
         f"Estimated sizes (largest dimension): {sizes_cm} cm"
     )
@@ -670,6 +682,34 @@ def _on_wall_fraction(rect, black_lines: list[tuple]) -> float:
     return hits / len(points)
 
 
+# ---------------------------------------------------------------------------
+# Per-segment image crops: instead of making the agent hunt for a segment's
+# (x%,y%) on the whole plan, we render a small zoomed crop centered on each
+# segment (with surrounding context, so any text label nearby is visible) and
+# attach it next to that segment's attributes in the listing.
+# ---------------------------------------------------------------------------
+_CROP_PAD = 45         # PDF units of context to include around the segment bbox
+_CROP_MIN_SIDE = 110   # minimum crop box side (units) so a thin sliver still shows context
+_CROP_TARGET_PX = 220  # approximate output image size in pixels
+_CROP_MAX_ZOOM = 8.0   # cap zoom so tiny segments don't render huge images
+
+
+def _crop_segment_png(page, rect) -> str:
+    """Render a small zoomed PNG centered on one segment; return base64 (no prefix)."""
+    cx, cy = (rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2
+    side = max(max(rect.width, rect.height) + 2 * _CROP_PAD, _CROP_MIN_SIDE)
+    half = side / 2
+    clip = fitz.Rect(
+        max(page.rect.x0, cx - half),
+        max(page.rect.y0, cy - half),
+        min(page.rect.x1, cx + half),
+        min(page.rect.y1, cy + half),
+    )
+    zoom = min(_CROP_MAX_ZOOM, _CROP_TARGET_PX / max(side, 1.0))
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip)
+    return base64.b64encode(pix.tobytes("png")).decode()
+
+
 def _describe_segment(seg: dict, page, cm_per_unit: float, black_lines=None) -> dict:
     rect = seg["rect"]
     w, h = rect.width, rect.height
@@ -698,7 +738,7 @@ def _describe_segment(seg: dict, page, cm_per_unit: float, black_lines=None) -> 
 
 
 @tool
-def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> str:
+def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> list:
     """List every colored vector segment of a given color in a PDF floor plan, each with an ID.
 
     Reads the exact geometry from the PDF (no visual guessing). For each segment it
@@ -706,6 +746,8 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     an ID, real length in cm, orientation (horizontal/vertical/boxy), whether it is
     a solid-fill or a thin-stroke, whether its path is straight or curved, its center
     as a percentage of the page, and 'clusterxN' when N segments pile on one center.
+    Each segment's text line is followed by a zoomed image crop of that spot on the
+    plan (with surrounding context) so you can see what it is and read nearby labels.
 
     Use these facts plus the plan image to decide WHICH segments belong to a task,
     then pass the relevant IDs to 'measure_segments_by_id' to get their total length.
@@ -729,7 +771,9 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
         page_number: 1-indexed page number to read (default 1 = first page).
 
     Returns:
-        A numbered list of segments with length, orientation, style, and position.
+        A list of content blocks: a header, then per segment a text line of its
+        attributes followed by an image crop, then closing notes. (On an error,
+        a single string message is returned instead.)
     """
     supported = list(_HUE_TARGETS) + ["black", "white", "gray"]
     if color.lower() not in supported and _parse_hex(color) is None:
@@ -760,18 +804,29 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     described = [_describe_segment(s, page, cm_per_unit, black_lines) for s in segs]
     canonical = _duplicate_canonical(segs, page)
     colocated = _colocated_counts(segs, page)
+    # Render the per-segment crops while the page is still open.
+    crops = [_crop_segment_png(page, s["rect"]) for s in segs]
     doc.close()
 
     if not described:
         return f"No {color} segments found in the floor plan area."
 
     ns = _namespace(color, page_number)
-    lines = [
-        f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-').",
-        "Each segment lists neutral geometry only -- decide for yourself what it is:",
-        "  length | orientation | solid-fill or thin-stroke | straight or curved | "
-        "center (x%,y%) | clusterxN (segments sharing this center).",
-    ]
+    # The result is a list of content blocks: a header, then for every segment a
+    # text line of its attributes immediately followed by a zoomed image crop of
+    # that spot on the plan, then closing notes. The agent sees each segment's
+    # actual pixels (and any text label near it) instead of hunting for (x%,y%).
+    blocks: list[dict] = [{
+        "type": "text",
+        "text": (
+            f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-').\n"
+            "For each segment below you get neutral geometry AND a zoomed image crop of that "
+            "spot on the plan (with surrounding context). Decide for yourself what each one is "
+            "-- read any text label visible in the crop; it is the strongest signal.\n"
+            "Attributes: length | orientation | solid-fill or thin-stroke | straight or curved "
+            "| center (x%,y%) | clusterxN (segments sharing this center)."
+        ),
+    }]
     has_dups = False
     has_cluster = False
     for i, d in enumerate(described):
@@ -786,29 +841,38 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
             has_cluster = True
         else:
             cluster = ""
-        lines.append(
-            f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} | {d['shape']}"
-            f" | center ({d['cx']}%,{d['cy']}%){cluster}{on_wall}{dup}"
-        )
+        blocks.append({
+            "type": "text",
+            "text": (
+                f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} | {d['shape']}"
+                f" | center ({d['cx']}%,{d['cy']}%){cluster}{on_wall}{dup}"
+            ),
+        })
+        blocks.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{crops[i]}", "detail": "low"},
+        })
+
+    notes = []
     if has_cluster:
-        lines.append(
-            "\nNote: 'clusterxN' means N segments pile on nearly the same center. A "
-            "structural line stands roughly alone; a large cluster of short/curved "
-            "strokes is typically a filled symbol or hatch (e.g. a fixture or arc), "
-            "not building length."
+        notes.append(
+            "Note: 'clusterxN' means N segments pile on nearly the same center. A structural "
+            "line stands roughly alone; a large cluster of short/curved strokes is typically a "
+            "filled symbol or hatch (e.g. a fixture or arc), not building length -- confirm by "
+            "reading the label in its crop."
         )
     if has_dups:
-        lines.append(
-            "\nNote: segments marked 'dup-of <id>' are a second trace of the same "
-            "physical element (e.g. the other edge of a double-line wall). Assign only "
-            "the referenced <id> to a task and ignore the duplicate, or you will "
-            "double-count its length."
+        notes.append(
+            "Note: segments marked 'dup-of <id>' are a second trace of the same physical element "
+            "(e.g. the other edge of a double-line wall). Assign only the referenced <id> to a "
+            "task and ignore the duplicate, or you will double-count its length."
         )
-    lines.append(
-        f"\nSelect the IDs that belong to your task and pass them (with the '{ns}-' "
-        "prefix) to measure_segments_by_id."
+    notes.append(
+        f"Select the IDs that belong to your task and pass them (with the '{ns}-' prefix) "
+        "to measure_segments_by_id."
     )
-    return "\n".join(lines)
+    blocks.append({"type": "text", "text": "\n".join(notes)})
+    return blocks
 
 
 @tool(name_or_callable="measure_segments_by_id")

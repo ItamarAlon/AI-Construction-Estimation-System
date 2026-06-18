@@ -100,15 +100,13 @@ SYSTEM_PROMPT_SELECT_IDS = (
     # "stacked on one center. A high cluster count is a strong sign the segment is part of a "
     # "drawn symbol, not building length -> ignore for per-meter tasks (it may instead be a "
     # "per-unit item to count).\n"
-    "  - Cross-check with the plan image: for each segment, look at the area around its "
-    "reported center (x%,y%) in the image. TEXT LABELS ARE THE STRONGEST SIGNAL — if "
-    "there is any text or annotation near the element (e.g. a label like 'sewer', a room "
-    "name, a fixture tag), read it and let it determine the classification. If no text is present, reason from the visual "
-    "appearance (is it a drawn line following a room outline, or a symbol/fixture).\n"
-    "  - Segments with a high 'clusterxN' count pile on one center — look at that spot in "
-    "the image and read any label there before deciding. "
-    #"A cluster with a label is a named "
-    #"fixture or annotation; classify it according to what the label says, not as a wall.\n"
+    "  - Each segment in the listing comes with its OWN zoomed image crop of that exact "
+    "spot on the plan. Look at the crop for every segment before classifying it. TEXT "
+    "LABELS ARE THE STRONGEST SIGNAL — if the crop shows any text or annotation near the "
+    "element (e.g. a label like 'sewer', a room name, a fixture tag), read it and let it "
+    "determine the classification. If no "
+    "text is visible, reason from what the crop shows (a line following a room outline = "
+    "wall; a symbol/fixture/arc = not wall length).\n"
     "  - DUPLICATES: a wall drawn as a double line surfaces as two near-identical segments; "
     "the listing flags the extra one as 'dup-of <id>'. Assign only the referenced <id> and "
     "tag every 'dup-of' segment 'ignore (duplicate of <id>)' -- counting both DOUBLES the "
@@ -120,15 +118,18 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "Do not output the final JSON until the classification table is complete. return it in the output as well (for logging reasons)\n\n"
 
     "--- PER-UNIT TASKS (doors, fixtures, rooms -- discrete countable items) ---\n"
-    "These bypass the per-meter phases. Count an item ONLY when you can actually identify "
-    "its symbol on the plan -- never count a whole color's outline shapes blindly (that "
-    "sweeps in text, dimensions and unrelated marks). To count, either:\n"
-    "  - call 'count_outline_shapes_by_color' on the color of the specific symbol, then "
-    "check the result and the plan image makes sense for that item (e.g. the shapes are "
-    "where you see doors, and there are roughly that many); or\n"
+    "These bypass the per-meter phases. CRITICAL: never derive a per-unit count by tallying "
+    "rows in the Phase-2 segment listing -- one physical item (e.g. a door) is usually drawn "
+    "as SEVERAL segments (an arc plus a header/jamb line), so counting segments over-counts. "
+    "In the classification table, tag such segments 'ignore (per-unit item, counted separately)'. "
+    "Get the actual count ONE of these ways:\n"
+    "  - call 'count_outline_shapes_by_color' on the color of the specific symbol (it merges "
+    "the segments of each symbol into a single item), then sanity-check against the plan image; "
+    "or\n"
     "  - read the plan image and count the symbols visually.\n"
-    "If you cannot find a distinct symbol for a per-unit task on the plan, do NOT invent a "
-    "count -- omit the task instead.\n\n"
+    "Never count a whole color's outline shapes blindly (that sweeps in text, dimensions and "
+    "unrelated marks). If you cannot find a distinct symbol for a per-unit task on the plan, do "
+    "NOT invent a count -- omit the task instead.\n\n"
 
     "--- FINAL OUTPUT (segment assignments only -- do NOT measure or price) ---\n"
     "You do NOT call 'measure_segments_by_id'. A separate node handles measurement after you. "
@@ -253,7 +254,7 @@ agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).with_memory().pdf_reader().with_todos().build()
+).with_memory().pdf_reader().tool_images().with_todos().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

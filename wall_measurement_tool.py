@@ -524,12 +524,19 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
         if length_units < _MIN_UNITS:
             continue
 
+        has_curve = any(it[0] == "c" for it in drawing["items"])
         key = (round(rect.x0, 1), round(rect.y0, 1), round(rect.x1, 1), round(rect.y1, 1))
         if key not in by_key:
-            by_key[key] = {"rect": rect, "length_units": length_units, "filled": bool(fill_match)}
+            by_key[key] = {
+                "rect": rect,
+                "length_units": length_units,
+                "filled": bool(fill_match),
+                "curved": has_curve,
+            }
             order.append(key)
         else:
             by_key[key]["filled"] = by_key[key]["filled"] or bool(fill_match)
+            by_key[key]["curved"] = by_key[key]["curved"] or has_curve
 
     return [by_key[k] for k in order]
 
@@ -584,6 +591,33 @@ def _duplicate_canonical(segs: list[dict], page) -> list[int]:
                 continue
             canonical[j] = i
     return canonical
+
+
+_COLOCATED_TOL = 0.03   # center radius (fraction of page) for the co-location count
+
+
+def _colocated_counts(segs: list[dict], page) -> list[int]:
+    """For each segment, how many segments (incl. itself) cluster at its center.
+
+    A neutral fact, not a judgment: a structural line sits roughly alone (count
+    ~1-2, the second being its own fill/outline trace), whereas a hatched fill or
+    a multi-stroke symbol piles many segments on one spot (count high). The agent
+    uses this to reason — e.g. "30 segments on one center → a symbol, not walls".
+    """
+    n = len(segs)
+    counts = [1] * n
+    if n < 2:
+        return counts
+    w, h = page.rect.width, page.rect.height
+    cx = [(s["rect"].x0 + s["rect"].x1) / 2 for s in segs]
+    cy = [(s["rect"].y0 + s["rect"].y1) / 2 for s in segs]
+    for i in range(n):
+        c = 0
+        for j in range(n):
+            if abs(cx[i] - cx[j]) <= _COLOCATED_TOL * w and abs(cy[i] - cy[j]) <= _COLOCATED_TOL * h:
+                c += 1
+        counts[i] = c
+    return counts
 
 
 def _is_black(color: tuple) -> bool:
@@ -641,20 +675,20 @@ def _describe_segment(seg: dict, page, cm_per_unit: float, black_lines=None) -> 
     w, h = rect.width, rect.height
     length_cm = round(seg["length_units"] * cm_per_unit, 1)
     ratio = (w / h) if h > 0 else float("inf")
+    # Neutral geometry only — no guessing whether it's a wall or a symbol.
     if ratio >= 3:
         orient = "horizontal"
     elif ratio <= 1 / 3:
         orient = "vertical"
-    elif 0.5 <= ratio <= 2:
-        orient = "square (arc/symbol)"
     else:
-        orient = "rectangular"
+        orient = "boxy"   # bbox ~square: could be a diagonal/corner wall OR a symbol
     cx = round((rect.x0 + rect.x1) / 2 / page.rect.width * 100)
     cy = round((rect.y0 + rect.y1) / 2 / page.rect.height * 100)
     described = {
         "length_cm": length_cm,
         "orient": orient,
-        "style": "FILLED" if seg["filled"] else "OUTLINE",
+        "shape": "curved" if seg.get("curved") else "straight",
+        "style": "solid-fill" if seg["filled"] else "thin-stroke",
         "cx": cx,
         "cy": cy,
     }
@@ -668,19 +702,17 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     """List every colored vector segment of a given color in a PDF floor plan, each with an ID.
 
     Reads the exact geometry from the PDF (no visual guessing). For each segment it
-    reports: an ID, its real length in cm, orientation, whether it is FILLED (solid)
-    or OUTLINE (stroke only), and its center position as a percentage of the page.
+    reports NEUTRAL FACTS — it does not guess what the segment is. Each line gives:
+    an ID, real length in cm, orientation (horizontal/vertical/boxy), whether it is
+    a solid-fill or a thin-stroke, whether its path is straight or curved, its center
+    as a percentage of the page, and 'clusterxN' when N segments pile on one center.
 
-    Use this to decide WHICH segments belong to a measurement task, then pass the
-    relevant IDs to 'measure_segments_by_id' to get their total length.
+    Use these facts plus the plan image to decide WHICH segments belong to a task,
+    then pass the relevant IDs to 'measure_segments_by_id' to get their total length.
 
     Each ID is namespaced by color and page (e.g. "R3-5" = red, page 3, segment 5),
     so IDs from different colors or pages can never be mixed up. Always pass IDs
     exactly as shown — including the prefix — to 'measure_segments_by_id'.
-
-    Guidance: thin FILLED elongated segments are usually walls; square/arc OUTLINE
-    shapes are usually doors or window symbols; long thin OUTLINE segments far from
-    walls are often dimension/leader lines (not real building elements).
 
     When available, each segment also reports 'on-wall N%' — how much of it runs
     along the building's architectural linework. High (~80-100%) means it sits on a
@@ -727,14 +759,21 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
     black_lines = _collect_black_lines(page) if _ON_WALL_ENABLED else None
     described = [_describe_segment(s, page, cm_per_unit, black_lines) for s in segs]
     canonical = _duplicate_canonical(segs, page)
+    colocated = _colocated_counts(segs, page)
     doc.close()
 
     if not described:
         return f"No {color} segments found in the floor plan area."
 
     ns = _namespace(color, page_number)
-    lines = [f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-'):"]
+    lines = [
+        f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-').",
+        "Each segment lists neutral geometry only -- decide for yourself what it is:",
+        "  length | orientation | solid-fill or thin-stroke | straight or curved | "
+        "center (x%,y%) | clusterxN (segments sharing this center).",
+    ]
     has_dups = False
+    has_cluster = False
     for i, d in enumerate(described):
         on_wall = f" | on-wall {d['on_wall']}%" if "on_wall" in d else ""
         if canonical[i] != i:
@@ -742,9 +781,21 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> st
             has_dups = True
         else:
             dup = ""
+        if colocated[i] > 3:
+            cluster = f" | clusterx{colocated[i]}"
+            has_cluster = True
+        else:
+            cluster = ""
         lines.append(
-            f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} "
-            f"| center ({d['cx']}%,{d['cy']}%){on_wall}{dup}"
+            f"ID {ns}-{i} | {d['length_cm']} cm | {d['orient']} | {d['style']} | {d['shape']}"
+            f" | center ({d['cx']}%,{d['cy']}%){cluster}{on_wall}{dup}"
+        )
+    if has_cluster:
+        lines.append(
+            "\nNote: 'clusterxN' means N segments pile on nearly the same center. A "
+            "structural line stands roughly alone; a large cluster of short/curved "
+            "strokes is typically a filled symbol or hatch (e.g. a fixture or arc), "
+            "not building length."
         )
     if has_dups:
         lines.append(

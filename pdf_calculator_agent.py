@@ -2,7 +2,10 @@ from pathlib import Path
 import sys
 
 from langchain.tools import tool
-from construction_tasks_prices.read_construction_tasks_prices import get_task_price_tool
+from construction_tasks_prices.read_construction_tasks_prices import (
+    get_task_price_tool,
+    get_available_tasks_tool,
+)
 from wall_measurement_tool import (
     get_wall_lengths_by_color,
     count_outline_shapes_by_color,
@@ -53,12 +56,22 @@ model = ChatOpenAI(
 
 SYSTEM_PROMPT_SELECT_IDS = (
     "You are a construction cost estimator. "
-    "The user will give you a list of detected construction tasks and a PDF path. "
-    "Work in three phases for per-meter tasks. Per-unit tasks skip to the end.\n\n"
+    "The user will give you a PDF path (the plan images are included in the message). "
+    "You must FIRST detect which construction tasks appear on the plan, then cost each one.\n\n"
 
-    "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
-    "Always pass that page number to the tools (1-indexed, default 1). "
-    "If no page is specified, use page 1.\n\n"
+    "--- PHASE 0: DETECT TASKS ---\n"
+    "  1. Call 'get_available_tasks' to get the list of known task names (the menu).\n"
+    "  2. Read the PDF plan images. Decide which of those tasks are actually present. "
+    "A task can be explicit (labeled/colored on the plan) or inferred from context "
+    "(e.g. a kitchen layout implies 'Kitchen Demolition'; door symbols imply 'Door Demolition').\n"
+    "  3. Output the detected tasks, each with: the EXACT task name from the menu (including any "
+    "'(per meter)' suffix), the page it appears on, and how to find it on the plan (color, symbol, "
+    "or location). Only include tasks you actually found. If none are present, say so and stop.\n"
+    "  Then cost each detected task using the phases below.\n\n"
+
+    "A task name containing '(per meter)' is a per-meter task (use Phases 1-3). "
+    "Everything else is a per-unit task (use the PER-UNIT section). "
+    "Always pass the task's page number to the tools (1-indexed, default 1 if unsure).\n\n"
 
     "--- PHASE 1: ENUMERATE ---\n"
     "For every per-meter task on a page, call 'list_colored_segments' with its color "
@@ -108,14 +121,16 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "  3. Call 'multiply_numbers' to compute total cost = count x unit price.\n\n"
 
     "--- FINAL REPORT ---\n"
-    "For every task show: the Phase 2 classification table, the measured quantity "
-    "(meters or count), the unit price, and the total cost. End with a grand total.\n\n"
+    "First restate the Phase 0 detected-task list. Then for every task show: the Phase 2 "
+    "classification table, the measured quantity (meters or count), the unit price, and the "
+    "total cost. End with a grand total.\n\n"
     "IMPORTANT: Do not write the final summary until 'get_task_price' and "
     "'multiply_numbers' have been called for every task. "
     "If any task is unpriced, your next output must be a tool call."
 )
 
 TOOLS_SELECT_IDS = [
+    get_available_tasks_tool,
     get_task_price_tool,
     multiply_numbers,
     list_colored_segments,

@@ -30,7 +30,7 @@ _PLAN_WIDTH_FRACTION = 0.70  # title blocks occupy the rightmost ~25-30% of the 
 # It is a noisy hint, not a classifier — flip _ON_WALL_ENABLED to False to
 # remove it entirely (no extra cost, no extra column) if it causes problems.
 # ---------------------------------------------------------------------------
-_ON_WALL_ENABLED = True
+_ON_WALL_ENABLED = False
 _ON_WALL_THRESHOLD = 8.0   # PDF units; widened to tolerate offset wall-traces
 _ON_WALL_SAMPLES = 20      # points sampled along the segment centerline
 

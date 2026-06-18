@@ -41,3 +41,4 @@ __pycache__/
 # Environment variables
 .env
 .env.*
+/SESSION_CONTEXT.md

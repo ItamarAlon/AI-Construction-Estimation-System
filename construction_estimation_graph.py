@@ -62,15 +62,26 @@ def run_estimation(state: State) -> dict:
     #write_logs("classifications: " + classifications)
     return {"agent_output": agent_output, "classifications": classifications}
 
+def _measure_group(pdf_path: str, group: dict) -> float:
+    """Measure one {color, page, ids} group; return meters (0.0 if unparseable)."""
+    result_text = measure_segments_by_id(
+        pdf_path, group["color"], group["ids"], group.get("page", 1)
+    )
+    m = re.search(r"Total:\s*([\d.]+)\s*m", result_text)
+    return float(m.group(1)) if m else 0.0
+
+
 def run_measure(state: State) -> dict:
-    """Call measure_segments_by_id for per-meter tasks; pass counts through for per-unit."""
+    """Sum per-meter lengths (across all pages/colors of a task); pass counts through."""
     pdf_path = state["pdf_path"]
     quantities: dict = {}
     for task_name, info in state["classifications"].items():
-        if "ids" in info:
-            result_text = measure_segments_by_id(pdf_path, info["color"], info["ids"], info.get("page", 1))
-            m = re.search(r"Total:\s*([\d.]+)\s*m", result_text)
-            quantities[task_name] = float(m.group(1)) if m else 0.0
+        if "groups" in info:                       # one task, possibly many pages/colors
+            quantities[task_name] = round(
+                sum(_measure_group(pdf_path, g) for g in info["groups"]), 2
+            )
+        elif "ids" in info:                         # back-compat: single group inline
+            quantities[task_name] = _measure_group(pdf_path, info)
         elif "count" in info:
             quantities[task_name] = info["count"]
     write_logs("quantities: " + str(quantities))
@@ -97,8 +108,8 @@ graph = (
 
 #PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 #PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\הריסה (1).pdf"
-PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
-#PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\סט תוכניות (1).pdf"
+#PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
+PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\סט תוכניות (1).pdf"
 
 if __name__ == "__main__":
     write_logs("-----------------------------")

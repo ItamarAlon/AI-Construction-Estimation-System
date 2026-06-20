@@ -25,6 +25,7 @@ def relocate_tool_images(request, handler):
 
     new_messages = []
     pending: list[HumanMessage] = []
+    n_imgs = 0
     for m in messages:
         is_tool = isinstance(m, ToolMessage)
         # Flush relocated images once the contiguous run of tool results ends, so
@@ -43,10 +44,20 @@ def relocate_tool_images(request, handler):
                 )
             )
             pending.append(HumanMessage(content=m.content))
+            n_imgs += sum(
+                1 for b in m.content
+                if isinstance(b, dict) and b.get("type") == "image_url"
+            )
         else:
             new_messages.append(m)
 
     if pending:
         new_messages.extend(pending)
+
+    try:
+        from logs.write_logs import write_logs
+        write_logs(f"[tool_image_middleware] relocated {n_imgs} crop image(s) into user message(s)")
+    except Exception:
+        pass
 
     return handler(request.override(messages=new_messages))

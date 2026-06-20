@@ -4,5 +4,6 @@
   "Kitchen Removal": 1000,
   "Water Pipeline Installation (per meter)": 40,
   "Kitchen Demolition": 5000.0,
-  "Door Demolition": 400
+  "Door Demolition": 400,
+  "install magnetic light profile (per meter)": 100
 }

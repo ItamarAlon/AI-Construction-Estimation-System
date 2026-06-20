@@ -694,10 +694,10 @@ def _on_wall_fraction(rect, black_lines: list[tuple]) -> float:
 # segment (with surrounding context, so any text label nearby is visible) and
 # attach it next to that segment's attributes in the listing.
 # ---------------------------------------------------------------------------
-_CROP_PAD = 45         # PDF units of context to include around the segment bbox
-_CROP_MIN_SIDE = 110   # minimum crop box side (units) so a thin sliver still shows context
-_CROP_TARGET_PX = 220  # approximate output image size in pixels
-_CROP_MAX_ZOOM = 8.0   # cap zoom so tiny segments don't render huge images
+_CROP_PAD = 55         # PDF units of context to include around the segment bbox
+_CROP_MIN_SIDE = 130   # minimum crop box side (units) so a thin sliver still shows context
+_CROP_TARGET_PX = 384  # approximate output image size in pixels (bigger -> symbols readable)
+_CROP_MAX_ZOOM = 12.0  # cap zoom so tiny segments don't render huge images
 
 
 def _crop_segment_png(page, rect) -> str:

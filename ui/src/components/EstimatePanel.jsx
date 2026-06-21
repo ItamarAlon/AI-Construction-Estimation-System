@@ -110,11 +110,40 @@ export default function EstimatePanel() {
                 <p className={styles.resultError}>{r.error}</p>
               ) : (
                 <>
-                  <details className={styles.details}>
-                    <summary className={styles.summary}>Detected tasks</summary>
-                    <pre className={styles.pre}>{r.detected_tasks}</pre>
-                  </details>
                   <pre className={styles.resultText}>{r.result}</pre>
+
+                  {r.annotated_pages?.length > 0 && (
+                    <div className={styles.annotations}>
+                      <div className={styles.legend}>
+                        {r.legend?.map((entry) => (
+                          <span key={entry.task} className={styles.legendItem}>
+                            <span
+                              className={styles.legendSwatch}
+                              style={{ background: entry.color }}
+                            />
+                            {entry.task}
+                          </span>
+                        ))}
+                      </div>
+                      {r.annotated_pages.map((p) => (
+                        <figure key={p.page} className={styles.annotPage}>
+                          <img
+                            className={styles.annotImg}
+                            src={`data:image/png;base64,${p.image_b64}`}
+                            alt={`Page ${p.page} with marked tasks`}
+                          />
+                          <figcaption className={styles.annotCaption}>
+                            Page {p.page}
+                          </figcaption>
+                        </figure>
+                      ))}
+                    </div>
+                  )}
+
+                  <details className={styles.details}>
+                    <summary className={styles.summary}>Agent reasoning</summary>
+                    <pre className={styles.pre}>{r.agent_output}</pre>
+                  </details>
                 </>
               )}
             </div>

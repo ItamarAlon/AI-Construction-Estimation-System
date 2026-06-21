@@ -33,9 +33,19 @@ app.add_middleware(
 class EstimateRequest(BaseModel):
     pdf_path: str
 
+class AnnotatedPage(BaseModel):
+    page: int
+    image_b64: str
+
+class LegendEntry(BaseModel):
+    task: str
+    color: str
+
 class EstimateResponse(BaseModel):
-    detected_tasks: str
+    agent_output: str
     result: str
+    annotated_pages: list[AnnotatedPage] = []
+    legend: list[LegendEntry] = []
 
 class AddTaskRequest(BaseModel):
     name: str
@@ -78,12 +88,22 @@ def delete_task(task_name: str):
     return {"message": f"Task '{task_name}' removed successfully."}
 
 
+def _to_response(state: dict) -> EstimateResponse:
+    annotations = state.get("annotations") or {}
+    return EstimateResponse(
+        agent_output=state.get("agent_output", ""),
+        result=state["result"],
+        annotated_pages=annotations.get("pages", []),
+        legend=annotations.get("legend", []),
+    )
+
+
 @app.post("/estimate", response_model=EstimateResponse)
 def estimate(request: EstimateRequest):
     if not Path(request.pdf_path).exists():
         raise HTTPException(status_code=400, detail=f"File not found: {request.pdf_path}")
     state = graph.invoke({"pdf_path": request.pdf_path})
-    return EstimateResponse(detected_tasks=state["detected_tasks"], result=state["result"])
+    return _to_response(state)
 
 
 @app.post("/estimate/upload", response_model=EstimateResponse)
@@ -95,9 +115,6 @@ async def estimate_upload(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, tmp)
         tmp.close()
         state = graph.invoke({"pdf_path": tmp.name})
-        return EstimateResponse(
-            detected_tasks=state["detected_tasks"],
-            result=state["result"],
-        )
+        return _to_response(state)
     finally:
         Path(tmp.name).unlink(missing_ok=True)

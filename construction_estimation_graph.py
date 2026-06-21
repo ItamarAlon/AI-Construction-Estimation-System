@@ -7,6 +7,7 @@ from pdf_calculator_agent import agent as estimation_agent
 from wall_measurement_tool import measure_segments_by_id, measure_task_groups
 from detect_plan_colors import list_present_colors, format_palette
 from calculate_prices import extract_quantities, price_quantities, format_report
+from render_annotations import render_annotations
 from logs.write_logs import write_logs
 
 
@@ -16,6 +17,7 @@ class State(TypedDict):
     agent_output: str       # raw agent text (detection + classification + segment-assignment JSON)
     classifications: dict   # parsed: task -> {color, page, ids} or {count}
     quantities: dict        # task name -> measured quantity (meters or count)
+    annotations: dict       # per-page PNGs + legend marking each task on the plan
     breakdown: dict         # priced line items + grand total
     result: str             # human-readable cost report
 
@@ -88,6 +90,14 @@ def run_measure(state: State) -> dict:
     return {"quantities": quantities}
 
 
+def run_annotate(state: State) -> dict:
+    """Draw the agent's task assignments onto the plan (per-page PNGs for the UI)."""
+    annotations = render_annotations(state["pdf_path"], state["classifications"])
+    write_logs(f"annotations: {len(annotations['pages'])} page(s) marked; "
+               f"legend={annotations['legend']}")
+    return {"annotations": annotations}
+
+
 def run_pricing(state: State) -> dict:
     breakdown = price_quantities(state["quantities"])
     return {"breakdown": breakdown, "result": format_report(breakdown)}
@@ -97,11 +107,13 @@ graph = (
     .add_node("detect_colors", run_detect_colors)
     .add_node("estimation", run_estimation)
     .add_node("measure", run_measure)
+    .add_node("annotate", run_annotate)
     .add_node("pricing", run_pricing)
     .add_edge(START, "detect_colors")
     .add_edge("detect_colors", "estimation")
     .add_edge("estimation", "measure")
-    .add_edge("measure", "pricing")
+    .add_edge("measure", "annotate")
+    .add_edge("annotate", "pricing")
     .add_edge("pricing", END)
     .compile()
 )

@@ -1163,11 +1163,12 @@ def _collect_group_rects(pdf_path: str, group: dict) -> list[dict]:
     return kept
 
 
-def _cluster_connected(rects: list) -> list:
+def _cluster_connected(rects: list) -> list[list[int]]:
     """Union-find clustering of rects by bounding-box connectivity.
 
-    Returns one representative dict per cluster, with the cluster's center as a
-    fraction of the page (for cross-page de-duplication): {cx, cy, page}.
+    Returns clusters as lists of member indices into `rects`. Two rects join
+    when the gap between their boxes is within _SYMBOL_GAP_FACTOR of the smaller
+    box's size (an item's parts touch; separate items don't).
     """
     n = len(rects)
     parent = list(range(n))
@@ -1188,12 +1189,16 @@ def _cluster_connected(rects: list) -> list:
             if _rect_gap(ri, rj) <= tol:
                 parent[find(i)] = find(j)
 
-    groups: dict[int, list] = {}
+    clusters: dict[int, list] = {}
     for i in range(n):
-        groups.setdefault(find(i), []).append(i)
+        clusters.setdefault(find(i), []).append(i)
+    return list(clusters.values())
 
+
+def _cluster_centers(rects: list) -> list[dict]:
+    """Cluster rects and return one {cx, cy, page} center (page fraction) each."""
     reps = []
-    for members in groups.values():
+    for members in _cluster_connected(rects):
         xs = [(rects[i]["rect"].x0 + rects[i]["rect"].x1) / 2 for i in members]
         ys = [(rects[i]["rect"].y0 + rects[i]["rect"].y1) / 2 for i in members]
         sample = rects[members[0]]
@@ -1203,6 +1208,25 @@ def _cluster_connected(rects: list) -> list:
             "page": sample["page"],
         })
     return reps
+
+
+def cluster_group_item_rects(pdf_path: str, group: dict) -> list:
+    """Merged bounding box per clustered item in a {color, page, ids} group.
+
+    Each per-unit item (e.g. a door = arc + header) becomes ONE fitz.Rect (the
+    union of its segments' boxes), in page coordinates — so the annotation can
+    draw one box per physical item instead of one per raw segment.
+    """
+    rects = _collect_group_rects(pdf_path, group)
+    out = []
+    for members in _cluster_connected(rects):
+        boxes = [rects[i]["rect"] for i in members]
+        merged = fitz.Rect(
+            min(b.x0 for b in boxes), min(b.y0 for b in boxes),
+            max(b.x1 for b in boxes), max(b.y1 for b in boxes),
+        )
+        out.append(merged)
+    return out
 
 
 def count_task_groups(pdf_path: str, groups: list[dict]) -> int:
@@ -1216,7 +1240,7 @@ def count_task_groups(pdf_path: str, groups: list[dict]) -> int:
     pooled_items: list[dict] = []
     for g in groups:
         rects = _collect_group_rects(pdf_path, g)
-        pooled_items.extend(_cluster_connected(rects))
+        pooled_items.extend(_cluster_centers(rects))
 
     # Cross-page de-duplication: drop an item whose center matches one already
     # kept from a different page (the same layout drawn on several sheets).

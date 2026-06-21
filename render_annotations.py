@@ -14,7 +14,13 @@ from wall_measurement_tool import (
     _collect_colored_segments,
     _duplicate_canonical,
     _namespace,
+    cluster_group_item_rects,
 )
+
+
+def _is_per_meter(task_name: str) -> bool:
+    """Per-meter tasks are drawn per-segment; per-unit tasks per merged item."""
+    return task_name.strip().lower().endswith("(per meter)")
 
 # Distinct, high-contrast overlay colors assigned to tasks in order (RGB 0-1).
 _OVERLAY_COLORS = [
@@ -82,7 +88,14 @@ def render_annotations(pdf_path: str, classifications: dict) -> dict:
             for group in _groups_of(info):
                 if group.get("page", 1) != page_no:
                     continue
-                for r in _rects_for_group(page, group):
+                # Per-meter tasks: one box per segment. Per-unit tasks: one box
+                # per clustered physical item (a door's arc+header merged) so the
+                # overlay matches the counted quantity instead of showing N boxes.
+                if _is_per_meter(task):
+                    rects = _rects_for_group(page, group)
+                else:
+                    rects = cluster_group_item_rects(pdf_path, group)
+                for r in rects:
                     box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
                                     r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
                     page.draw_rect(box, color=rgb, width=_BOX_WIDTH)

@@ -8,7 +8,12 @@ import re
 
 @before_agent
 def pdf_injection_middleware(state, runtime):
-    """Detect a PDF path in the last user message and expand it into content blocks."""
+    """Detect a PDF path in the last user message and expand it into content blocks.
+
+    Handles both string messages and list-of-blocks messages. When a list already
+    contains image_url blocks (PDF pre-rendered by the caller), it is left unchanged
+    to avoid double-rendering.
+    """
     messages = state.get("messages", [])
     if not messages:
         return None
@@ -21,17 +26,33 @@ def pdf_injection_middleware(state, runtime):
     else:
         return None
 
-    if not isinstance(content, str):
-        return None
+    if isinstance(content, str):
+        pdf_match = re.search(r'["\']?[\w\\/: .()-]+\.pdf["\']?', content, re.IGNORECASE)
+        if not pdf_match:
+            return None
+        pdf_blocks = _pdf_to_content_blocks(pdf_match.group())
+        new_content = [{"type": "text", "text": content}] + pdf_blocks
+        new_messages = messages[:-1] + [HumanMessage(content=new_content)]
+        return {"messages": new_messages}
 
-    pdf_match = re.search(r'["\']?[\w\\/: .()-]+\.pdf["\']?', content, re.IGNORECASE)
-    if not pdf_match:
-        return None
+    if isinstance(content, list):
+        # If images are already present the PDF was pre-rendered — nothing to do.
+        if any(block.get("type") == "image_url" for block in content):
+            return None
+        # Find the first text block that contains a PDF path and inject after it.
+        for i, block in enumerate(content):
+            if block.get("type") != "text":
+                continue
+            pdf_match = re.search(r'["\']?[\w\\/: .()-]+\.pdf["\']?',
+                                   block.get("text", ""), re.IGNORECASE)
+            if pdf_match:
+                pdf_blocks = _pdf_to_content_blocks(pdf_match.group())
+                new_content = content[:i + 1] + pdf_blocks + content[i + 1:]
+                new_messages = messages[:-1] + [HumanMessage(content=new_content)]
+                return {"messages": new_messages}
 
-    pdf_blocks = _pdf_to_content_blocks(pdf_match.group())
-    new_content = [{"type": "text", "text": content}] + pdf_blocks
-    new_messages = messages[:-1] + [HumanMessage(content=new_content)]
-    return {"messages": new_messages}
+    return None
+
 
 def _pdf_to_content_blocks(pdf_path: str) -> list:
     """Render every page of a PDF as an image and return content blocks."""

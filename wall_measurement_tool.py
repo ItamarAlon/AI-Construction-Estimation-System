@@ -1094,3 +1094,145 @@ def measure_task_groups(pdf_path: str, groups: list[dict]) -> float:
             kept.append(s)
 
     return round(sum(s["length_cm"] for s in kept) / 100, 2)
+
+
+# ---------------------------------------------------------------------------
+# Per-unit counting: collapse the segments tagged to a per-unit task (e.g. a
+# door = arc + header) into discrete physical items by SPATIAL CONNECTIVITY.
+# Two segments belong to the same item when their bounding boxes touch or nearly
+# touch; separate items (doors in different doorways, with wall between) don't.
+# This runs ONLY over one task's tagged segments, so unrelated tasks can never
+# be merged, and the corner-of-two-walls false-merge can't occur (walls are a
+# different task and are summed by length, not clustered).
+# ---------------------------------------------------------------------------
+# Two boxes merge when the gap between them is at most this fraction of the
+# smaller box's size. 0 would require actual overlap; a small slack tolerates
+# the hairline gap between an arc and its header. Empirically the door count is
+# stable for 0.0-0.35 (8 doors on הריסה) and only over-merges adjacent doors at
+# >=0.5, so 0.25 sits safely in the middle of that band. Tunable.
+_SYMBOL_GAP_FACTOR = 0.25
+
+
+def _rect_gap(a, b) -> float:
+    """Shortest distance between two axis-aligned rects (0 if they overlap/touch)."""
+    dx = max(0.0, max(a.x0, b.x0) - min(a.x1, b.x1))
+    dy = max(0.0, max(a.y0, b.y0) - min(a.y1, b.y1))
+    return math.hypot(dx, dy)
+
+
+def _collect_group_rects(pdf_path: str, group: dict) -> list[dict]:
+    """Resolve one {color, page, ids} group to kept segment rects (page coords).
+
+    Each entry is {rect, page, w, h}; within-page double-line duplicates are
+    collapsed via _duplicate_canonical so a doubled outline isn't two items.
+    """
+    color = group["color"]
+    page_number = group.get("page", 1)
+    ids = group.get("ids", [])
+    path_obj = Path(pdf_path.strip("'\""))
+    if not ids or not path_obj.exists():
+        return []
+
+    expected_ns = _namespace(color, page_number)
+    indices = []
+    for token in ids:
+        prefix, sep, idx_str = str(token).rpartition("-")
+        if sep and idx_str.isdigit() and prefix == expected_ns:
+            indices.append(int(idx_str))
+
+    doc = fitz.open(str(path_obj))
+    page_idx = page_number - 1
+    if page_idx < 0 or page_idx >= len(doc):
+        doc.close()
+        return []
+    page = doc[page_idx]
+    segs = _collect_colored_segments(page, color)
+    canonical = _duplicate_canonical(segs, page)
+    w, h = page.rect.width, page.rect.height
+    doc.close()
+
+    kept, seen_reps = [], set()
+    for i in indices:
+        if i < 0 or i >= len(segs):
+            continue
+        rep = canonical[i]
+        if rep in seen_reps:
+            continue
+        seen_reps.add(rep)
+        kept.append({"rect": segs[i]["rect"], "page": page_number, "w": w, "h": h})
+    return kept
+
+
+def _cluster_connected(rects: list) -> list:
+    """Union-find clustering of rects by bounding-box connectivity.
+
+    Returns one representative dict per cluster, with the cluster's center as a
+    fraction of the page (for cross-page de-duplication): {cx, cy, page}.
+    """
+    n = len(rects)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        ri = rects[i]["rect"]
+        size_i = max(ri.width, ri.height)
+        for j in range(i + 1, n):
+            rj = rects[j]["rect"]
+            size_j = max(rj.width, rj.height)
+            tol = _SYMBOL_GAP_FACTOR * max(min(size_i, size_j), 1e-9)
+            if _rect_gap(ri, rj) <= tol:
+                parent[find(i)] = find(j)
+
+    groups: dict[int, list] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    reps = []
+    for members in groups.values():
+        xs = [(rects[i]["rect"].x0 + rects[i]["rect"].x1) / 2 for i in members]
+        ys = [(rects[i]["rect"].y0 + rects[i]["rect"].y1) / 2 for i in members]
+        sample = rects[members[0]]
+        reps.append({
+            "cx": (sum(xs) / len(xs)) / sample["w"],
+            "cy": (sum(ys) / len(ys)) / sample["h"],
+            "page": sample["page"],
+        })
+    return reps
+
+
+def count_task_groups(pdf_path: str, groups: list[dict]) -> int:
+    """Count discrete physical items for a per-unit task across its groups.
+
+    Each group's tagged segments are clustered into items by spatial
+    connectivity (an item's parts touch; separate items don't). Items that
+    repeat across pages of the same layout (same center) are counted once.
+    """
+    # Cluster per group/page (rect coordinates are only comparable within a page).
+    pooled_items: list[dict] = []
+    for g in groups:
+        rects = _collect_group_rects(pdf_path, g)
+        pooled_items.extend(_cluster_connected(rects))
+
+    # Cross-page de-duplication: drop an item whose center matches one already
+    # kept from a different page (the same layout drawn on several sheets).
+    kept: list[dict] = []
+    for item in pooled_items:
+        dup = False
+        for k in kept:
+            if k["page"] == item["page"]:
+                continue
+            if (
+                abs(item["cx"] - k["cx"]) <= _DUP_CENTER_TOL
+                and abs(item["cy"] - k["cy"]) <= _DUP_CENTER_TOL
+            ):
+                dup = True
+                break
+        if not dup:
+            kept.append(item)
+
+    return len(kept)

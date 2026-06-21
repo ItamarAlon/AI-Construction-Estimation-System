@@ -6,7 +6,12 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from pdf_calculator_agent import agent as estimation_agent
-from wall_measurement_tool import list_colored_segments, measure_segments_by_id, measure_task_groups
+from wall_measurement_tool import (
+    list_colored_segments,
+    measure_segments_by_id,
+    measure_task_groups,
+    count_task_groups,
+)
 from detect_plan_colors import list_present_colors, format_palette
 from calculate_prices import price_quantities, format_report
 from render_annotations import render_annotations
@@ -148,15 +153,22 @@ def _measure_group(pdf_path: str, group: dict) -> float:
 
 
 def run_measure(state: State) -> dict:
-    """Sum per-meter lengths (across all pages/colors of a task); pass counts through."""
+    """Reduce each task's tagged segments to a quantity.
+
+    Per-meter tasks (name ends '(per meter)') sum segment lengths. Per-unit
+    tasks cluster their tagged segments into discrete items by connectivity and
+    count them. A task given only {count: N} (no taggable symbol) passes through.
+    """
     pdf_path = state["pdf_path"]
     quantities: dict = {}
     for task_name, info in state["classifications"].items():
-        if "groups" in info:
-            quantities[task_name] = measure_task_groups(pdf_path, info["groups"])
-        elif "ids" in info:                         # back-compat: single group inline
-            quantities[task_name] = _measure_group(pdf_path, info)
-        elif "count" in info:
+        groups = info.get("groups") or ([info] if "ids" in info else None)
+        if groups is not None:
+            if task_name.strip().lower().endswith("(per meter)"):
+                quantities[task_name] = measure_task_groups(pdf_path, groups)
+            else:
+                quantities[task_name] = count_task_groups(pdf_path, groups)
+        elif "count" in info:                       # per-unit item with no segments to tag
             quantities[task_name] = info["count"]
     write_logs("quantities: " + str(quantities))
     return {"quantities": quantities}

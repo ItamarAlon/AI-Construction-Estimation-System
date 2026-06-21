@@ -4,7 +4,7 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from pdf_calculator_agent import agent as estimation_agent
-from wall_measurement_tool import measure_segments_by_id
+from wall_measurement_tool import measure_segments_by_id, measure_task_groups
 from detect_plan_colors import list_present_colors, format_palette
 from calculate_prices import extract_quantities, price_quantities, format_report
 from logs.write_logs import write_logs
@@ -77,9 +77,9 @@ def run_measure(state: State) -> dict:
     quantities: dict = {}
     for task_name, info in state["classifications"].items():
         if "groups" in info:                       # one task, possibly many pages/colors
-            quantities[task_name] = round(
-                sum(_measure_group(pdf_path, g) for g in info["groups"]), 2
-            )
+            # measure_task_groups de-duplicates identical segments across pages
+            # (same layout drawn on several sheets) instead of summing them.
+            quantities[task_name] = measure_task_groups(pdf_path, info["groups"])
         elif "ids" in info:                         # back-compat: single group inline
             quantities[task_name] = _measure_group(pdf_path, info)
         elif "count" in info:

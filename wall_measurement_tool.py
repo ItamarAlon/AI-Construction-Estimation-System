@@ -47,11 +47,22 @@ _DUP_ENABLED = True
 _DUP_LENGTH_TOL = 0.08   # max relative length difference within a group
 _DUP_CENTER_TOL = 0.04   # max center offset as a fraction of page width/height
 
-# Black is usually the plan's base drawing color (walls, text, dimensions, grid),
-# not a task-specific layer. When False, list_colored_segments refuses black so
-# the agent never tries to classify the whole base map. Flip to True for the rare
-# plan where black is a genuine task color.
-_LIST_BLACK_SEGMENTS = False
+# Achromatic colors (black, gray, white) are the plan's base drawing — existing
+# walls, text, dimensions, grid — not task-specific layers. When False,
+# list_colored_segments refuses achromatic colors so the agent never classifies
+# the whole base map. Flip to True for the rare plan where a gray/black layer is
+# a genuine task color.
+_LIST_BASE_COLORS = False
+
+
+def _is_base_color(color: str) -> bool:
+    """True if color is achromatic (black/gray/white) — the plan's base drawing."""
+    if color.lower() in ("black", "white", "gray", "grey"):
+        return True
+    rgb = _parse_hex(color)
+    if rgb is None:
+        return False
+    return colorsys.rgb_to_hsv(*rgb)[1] < _MIN_SATURATION
 
 # Short, collision-free color codes used to namespace segment IDs (e.g. "R3-5"
 # = red, page 3, index 5). "blue"/"black" and "gray"/"grey" must not collide.
@@ -788,12 +799,11 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> li
             f"{', '.join(supported)}"
         )
 
-    hex_rgb = _parse_hex(color)
-    is_black = color.lower() == "black" or (hex_rgb is not None and max(hex_rgb) < 0.2)
-    if is_black and not _LIST_BLACK_SEGMENTS:
+    if _is_base_color(color) and not _LIST_BASE_COLORS:
         return (
-            "Black is the plan's base drawing color (walls, text, dimensions, grid), not a "
-            "task layer, so it is not listed. Pick a task-specific color from the palette instead."
+            f"'{color}' is achromatic (black/gray/white) — the plan's base drawing of existing "
+            "walls, text, dimensions and grid, not a task layer. Pick a chromatic color from "
+            "the detected palette instead."
         )
 
     path_obj = Path(pdf_path.strip("'\""))

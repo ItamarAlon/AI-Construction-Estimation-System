@@ -20,6 +20,11 @@ class Agent:
     def run(self, text: str) -> str:
         return self._process_result(self.invoke(self._build_input(text), config=self._config, version="v2"))
 
+    def run_blocks(self, blocks: list) -> str:
+        """Like run() but accepts a pre-built content list (text + image blocks)."""
+        msg = {"messages": [{"role": "user", "content": blocks}]}
+        return self._process_result(self.invoke(msg, config=self._config, version="v2"))
+
     async def arun(self, text: str) -> str:
         return self._process_result(await self.ainvoke(self._build_input(text), config=self._config, version="v2"))
 

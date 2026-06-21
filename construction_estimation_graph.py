@@ -1,21 +1,40 @@
+import base64
+import json
 import re
 import pymupdf as fitz
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from pdf_calculator_agent import agent as estimation_agent
-from wall_measurement_tool import measure_segments_by_id, measure_task_groups
+from wall_measurement_tool import list_colored_segments, measure_segments_by_id, measure_task_groups
 from detect_plan_colors import list_present_colors, format_palette
-from calculate_prices import extract_quantities, price_quantities, format_report
+from calculate_prices import price_quantities, format_report
 from render_annotations import render_annotations
 from logs.write_logs import write_logs
 
 
+def _render_pdf_blocks(pdf_path: str) -> list[dict]:
+    """Render every page of a PDF as image content blocks (same as pdf_injection_middleware)."""
+    doc = fitz.open(pdf_path)
+    blocks = [{"type": "text", "text": f"PDF: {pdf_path} ({len(doc)} page(s))"}]
+    for i, page in enumerate(doc, 1):
+        text = page.get_text().strip()
+        if text:
+            blocks.append({"type": "text", "text": f"Page {i} extracted text:\n{text}"})
+        pix = page.get_pixmap(matrix=fitz.Matrix(4, 4))
+        b64 = base64.b64encode(pix.tobytes("png")).decode()
+        blocks.append({"type": "text", "text": f"Page {i} image:"})
+        blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+    doc.close()
+    return blocks
+
+
 class State(TypedDict):
     pdf_path: str
-    palette: str            # detected color palette (hex codes) fed to the agent
-    agent_output: str       # raw agent text (detection + classification + segment-assignment JSON)
-    classifications: dict   # parsed: task -> {color, page, ids} or {count}
+    palette: str            # detected color palette (hex codes)
+    segment_blocks: list    # pre-computed listing content blocks (text + crop images)
+    agent_output: str       # raw agent text (classification JSON + reasoning)
+    classifications: dict   # parsed: task -> {groups:[{color,page,ids}]} or {count:N}
     quantities: dict        # task name -> measured quantity (meters or count)
     annotations: dict       # per-page PNGs + legend marking each task on the plan
     breakdown: dict         # priced line items + grand total
@@ -24,11 +43,9 @@ class State(TypedDict):
 
 def _extract_classifications(agent_output: str) -> dict:
     """Pull the classification JSON the agent emits as its last ```json block."""
-    blocks = re.findall(r"```json\s*(\{.*?\})\s*```", agent_output, re.DOTALL)
+    blocks = re.findall(r"```json\s*(.*?)```", agent_output, re.DOTALL)
     if blocks:
-        import json
-        return json.loads(blocks[-1])
-    import json
+        return json.loads(blocks[-1].strip())
     start, end = agent_output.rfind("{"), agent_output.rfind("}")
     if start != -1 and end > start:
         return json.loads(agent_output[start:end + 1])
@@ -49,20 +66,77 @@ def run_detect_colors(state: State) -> dict:
     return {"palette": palette}
 
 
+def _parse_palette_colors(palette: str) -> list[tuple[str, int]]:
+    """Extract (hex_code, page_number) pairs from the palette string."""
+    pairs: list[tuple[str, int]] = []
+    current_page = 1
+    for line in palette.splitlines():
+        page_m = re.match(r"---\s*Page\s*(\d+)\s*---", line.strip())
+        if page_m:
+            current_page = int(page_m.group(1))
+        hex_m = re.match(r"\s*(#[0-9a-fA-F]{6})", line)
+        if hex_m:
+            pairs.append((hex_m.group(1), current_page))
+    return pairs
+
+
+def run_enumerate(state: State) -> dict:
+    """Pre-compute segment listings for every palette color — no LLM needed.
+
+    Calls list_colored_segments for each (color, page) pair and collects the
+    content blocks (text attribute lines + inline crop images). These are passed
+    directly to the agent's initial message so it never needs to call the listing
+    tool itself.
+    """
+    pdf_path = state["pdf_path"]
+    pairs = _parse_palette_colors(state["palette"])
+    all_blocks: list[dict] = []
+    for color, page in pairs:
+        result = list_colored_segments.func(pdf_path, color, page)
+        all_blocks.append({
+            "type": "text",
+            "text": f"\n=== Segments for {color}, page {page} ===",
+        })
+        if isinstance(result, str):
+            all_blocks.append({"type": "text", "text": result})
+        else:
+            all_blocks.extend(result)
+    write_logs(f"enumerate: {len(pairs)} color/page pair(s), {len(all_blocks)} total blocks")
+    return {"segment_blocks": all_blocks}
+
+
 def run_estimation(state: State) -> dict:
-    # Path on its OWN first line (the image-injection middleware extracts it by
-    # regex; text on the same line would corrupt the match). Palette follows.
-    agent_input = (
-        f"{state['pdf_path']}\n\n"
+    """Run the classification agent with pre-enumerated segment data.
+
+    Builds the initial HumanMessage as a content list so segment crop images
+    are delivered inline (no tool round-trip). The pdf_injection_middleware
+    becomes a no-op when content is already a list, so we inject PDF pages here.
+    """
+    pdf_path = state["pdf_path"]
+
+    # Text preamble: PDF path, palette, and instruction summary
+    preamble = (
+        f"{pdf_path}\n\n"
         f"{state['palette']}\n\n"
-        "Use the exact hex codes above when calling list_colored_segments / "
-        "measure_segments_by_id."
+        "The segment listings for all palette colors (attributes + zoomed crops) "
+        "are provided below. Use the exact hex codes from the palette in your JSON output."
     )
-    agent_output = estimation_agent.run(agent_input)
+
+    # PDF page images (pdf_injection_middleware is a no-op when content is already
+    # a list, so we render the pages ourselves here)
+    pdf_blocks = _render_pdf_blocks(pdf_path)
+
+    content = (
+        [{"type": "text", "text": preamble}]
+        + pdf_blocks
+        + state["segment_blocks"]
+    )
+
+    agent_output = estimation_agent.run_blocks(content)
     classifications = _extract_classifications(agent_output)
     write_logs("agent_output: " + agent_output)
-    #write_logs("classifications: " + classifications)
     return {"agent_output": agent_output, "classifications": classifications}
+
 
 def _measure_group(pdf_path: str, group: dict) -> float:
     """Measure one {color, page, ids} group; return meters (0.0 if unparseable)."""
@@ -78,9 +152,7 @@ def run_measure(state: State) -> dict:
     pdf_path = state["pdf_path"]
     quantities: dict = {}
     for task_name, info in state["classifications"].items():
-        if "groups" in info:                       # one task, possibly many pages/colors
-            # measure_task_groups de-duplicates identical segments across pages
-            # (same layout drawn on several sheets) instead of summing them.
+        if "groups" in info:
             quantities[task_name] = measure_task_groups(pdf_path, info["groups"])
         elif "ids" in info:                         # back-compat: single group inline
             quantities[task_name] = _measure_group(pdf_path, info)
@@ -102,15 +174,18 @@ def run_pricing(state: State) -> dict:
     breakdown = price_quantities(state["quantities"])
     return {"breakdown": breakdown, "result": format_report(breakdown)}
 
+
 graph = (
     StateGraph(State)
     .add_node("detect_colors", run_detect_colors)
+    .add_node("enumerate", run_enumerate)
     .add_node("estimation", run_estimation)
     .add_node("measure", run_measure)
     .add_node("annotate", run_annotate)
     .add_node("pricing", run_pricing)
     .add_edge(START, "detect_colors")
-    .add_edge("detect_colors", "estimation")
+    .add_edge("detect_colors", "enumerate")
+    .add_edge("enumerate", "estimation")
     .add_edge("estimation", "measure")
     .add_edge("measure", "annotate")
     .add_edge("annotate", "pricing")
@@ -118,7 +193,6 @@ graph = (
     .compile()
 )
 
-#PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 #PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\הריסה (1).pdf"
 #PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
 PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\סט תוכניות (1).pdf"

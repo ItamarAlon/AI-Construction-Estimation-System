@@ -18,6 +18,14 @@ from render_annotations import render_annotations
 from logs.write_logs import write_logs
 
 
+# Anthropic caps each image's longest edge in many-image requests (we send the full
+# page plus a crop per segment). Keep the full-page render under this so the request
+# isn't rejected; the per-segment crops carry the labels, so the full page doesn't
+# need 4x. 1536px is comfortably under the limit and is also Anthropic's recommended
+# max edge for best image understanding.
+_FULL_PAGE_MAX_EDGE = 1536
+
+
 def _render_pdf_blocks(pdf_path: str) -> list[dict]:
     """Render every page of a PDF as image content blocks (same as pdf_injection_middleware)."""
     doc = fitz.open(pdf_path)
@@ -26,7 +34,10 @@ def _render_pdf_blocks(pdf_path: str) -> list[dict]:
         text = page.get_text().strip()
         if text:
             blocks.append({"type": "text", "text": f"Page {i} extracted text:\n{text}"})
-        pix = page.get_pixmap(matrix=fitz.Matrix(4, 4))
+        # Scale so the longest edge ~= _FULL_PAGE_MAX_EDGE (never upscale past 4x).
+        longest_pt = max(page.rect.width, page.rect.height)
+        zoom = min(4.0, _FULL_PAGE_MAX_EDGE / longest_pt) if longest_pt else 4.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
         b64 = base64.b64encode(pix.tobytes("png")).decode()
         blocks.append({"type": "text", "text": f"Page {i} image:"})
         blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})

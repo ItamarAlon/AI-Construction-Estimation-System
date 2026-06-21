@@ -37,8 +37,12 @@ def multiply_numbers(num1: float, num2: float) -> float:
     return num1 * num2
 
 
+# Vision model: gpt-4o reads small Hebrew crop labels unreliably (non-deterministic
+# OCR run-to-run), which caused tasks like Kitchen Removal to be missed. Claude reads
+# the same crops reliably, so the classification agent uses Claude via OpenRouter.
+# (Other Claude slugs available on this account: claude-sonnet-4 / -4.5, claude-opus-4.x.)
 model = ChatOpenAI(
-    model="openai/gpt-4o",
+    model="anthropic/claude-sonnet-4.6",
     temperature=0.2,
     base_url="https://openrouter.ai/api/v1",
     api_key=get_openrouter_api_key()
@@ -53,38 +57,65 @@ model = ChatOpenAI(
 
 SYSTEM_PROMPT_SELECT_IDS = (
     "You are a construction cost estimator. "
-    "The user message contains: the PDF plan images, the DETECTED COLOR PALETTE (exact hex "
+    "The user message contains: The PDF Plan, the DETECTED COLOR PALETTE (exact hex "
     "codes per page), and the PRE-COMPUTED SEGMENT LISTINGS for every palette color — "
     "attribute lines plus zoomed crop images, one crop per segment. "
-    "You do NOT need to call 'list_colored_segments'; all segment data is already in this "
-    "message. Use the exact hex codes from the palette in your JSON output.\n\n"
+    "Use the exact hex codes from the palette in your JSON output.\n\n"
 
     "--- PHASE 0: DETECT TASKS ---\n"
     "  1. Call 'get_available_tasks' to get the list of known task names (the menu).\n"
-    "  2. Read the PDF plan images. FIRST, look for a LEGEND / KEY (usually a boxed list "
+    "  2. Read the PDF plan. FIRST, look for a LEGEND / KEY (usually a boxed list "
     "on the side or corner of a page that maps each color or symbol to its meaning). Many "
     "plans have none -- that is fine, just move on. If one EXISTS, it is the authoritative "
-    "source for what each color/symbol represents. TRANSCRIBE it into an explicit table:\n"
+    "source for what each color/symbol represents. "
+    "TRANSCRIBE it into an explicit table:\n"
     "     <short symbol description> | <color> | <what it means> | <matching task or 'none'>\n"
+    #Might Overfit:
     "   e.g.  'solid line | yellow | wall demolition | Wall Demolition (per meter)'\n"
     "         'arc + short line | yellow | door | Door Demolition'\n"
+    #
+    "Text Labels written in the PDF are also a good indication for a task appearing. Read those as well."
     "   IMPORTANT: many legends distinguish items by SYMBOL SHAPE while using the SAME color. "
     "Describe each symbol carefully enough to recognise it later in a small image crop.\n"
     "  3. Decide which available tasks are actually present (from legend, explicit color "
     "labels, or context). Output each detected task with its EXACT name, page, and how to "
-    "identify it. If none are present, say so and stop.\n\n"
+    "identify it. If none are present, say so and stop."
+    "Don't invert new tasks. ONLY use the tasks given from 'get_available_tasks'.\n\n"
 
     "--- PHASE 2: CLASSIFY ---\n"
     "The segment listings are already in this message (sections headed '=== #hex, page N ==='). "
-    "Output a classification table covering EVERY segment — no segment may be skipped:\n\n"
-    "  ID <ns>-<i>  ->  <task name or 'ignore'>  [<one-line reason>]\n\n"
+    "Output a classification table covering EVERY segment — no segment may be skipped. "
+    "The table has THREE columns and you MUST fill all three for every segment:\n\n"
+    "  ID <ns>-<i>  |  <exact text visible in THIS crop, transcribed verbatim, or '(none)'>  |  <task name or 'ignore'>\n\n"
     "Each segment has a text attribute line followed immediately by its own zoomed crop image. "
     "The attributes give NEUTRAL GEOMETRY only (length, orientation, solid-fill/thin-stroke, "
     "straight/curved, center, clusterxN). The crop shows the actual spot on the plan.\n"
-    "  - Look at EVERY crop. TEXT LABELS IN THE CROP ARE THE STRONGEST SIGNAL.\n"
+    "  - TRANSCRIBE FIRST, CLASSIFY SECOND: for EVERY segment, look at ITS OWN crop and write "
+    "down the exact label text you actually see there (in the original language) BEFORE you "
+    "pick a task. Do NOT copy the label from a previous segment and do NOT guess it from the "
+    "shape — read the pixels of this specific crop. If you see no text, write '(none)'.\n"
+    "  - Then pick the task FROM THAT TRANSCRIBED TEXT. Two segments of the same color and shape "
+    "can carry different labels (e.g. one says 'wall', another says 'kitchen') — the label, not "
+    "the shape, decides the task. If the transcribed text names a different element than nearby "
+    "segments, it is a DIFFERENT task; never assume it is the same just because it looks similar.\n"
+    "  - MATCH AGAINST THE FULL TASK MENU, NOT JUST PHASE-0: a transcribed label maps to ANY task "
+    "from 'get_available_tasks' whose meaning it matches — even if you did NOT list that task in "
+    "Phase 0. Phase 0 is only a first skim and routinely misses tasks; the per-crop label is the "
+    "authoritative signal. Translate the label if needed (e.g. 'מטבח'/'kitchen' -> a Kitchen "
+    "task; 'חלון'/'window' -> a Window task) and tag the segment to that available task. NEVER "
+    "tag a segment 'ignore' when its transcribed label matches an available task just because the "
+    "task was absent from your Phase-0 list — add the task instead.\n"
+    "  - Never ignore a segment based on geometry alone — if it has a task-related label, tag it.\n"
     "  - LEGEND MATCHING: compare each crop's shape to your Phase-0 legend table. When a color "
     "is used for multiple tasks (e.g. yellow = walls AND doors), the shape in the crop is the "
     "ONLY way to tell them apart. Assign the segment to the task whose legend symbol matches.\n"
+    
+    # "  - ROOM / AREA OUTLINES: a rectangle or L-shape surrounding a labeled room or area "                                                                                   
+    # "(e.g. a box around text that says 'kitchen', 'bathroom') is a per-unit task "                                                                                                
+    # "marker — tag it to the matching task (Kitchen Demolition, Kitchen Removal, etc.). "                                                                                     
+    # "Do NOT call it a dimension line. Dimension lines are SHORT lines with arrowheads and a "
+    # "nearby NUMBER;\n"
+
     "  - Do NOT tag a segment 'ignore' just because it differs from other segments of the same "
     "color. Different shapes within one color are expected (walls vs. door arcs on the same "
     "yellow layer). Only ignore segments that genuinely belong to no task.\n"

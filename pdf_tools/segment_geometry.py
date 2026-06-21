@@ -36,7 +36,8 @@ _COLOCATED_TOL = 0.03   # center radius (fraction of page) for the co-location c
 # ---------------------------------------------------------------------------
 _CROP_PAD = 55         # PDF units of context to include around the segment bbox
 _CROP_MIN_SIDE = 130   # minimum crop box side (units) so a thin sliver still shows context
-_CROP_TARGET_PX = 384  # approximate output image size in pixels
+_CROP_TARGET_PX = 768  # approximate output image size in pixels (large enough that
+#                        labels on big zoomed-out segments stay legible to the model)
 _CROP_MAX_ZOOM = 12.0  # cap zoom so tiny segments don't render huge images
 
 

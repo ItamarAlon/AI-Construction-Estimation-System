@@ -427,7 +427,7 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> li
         })
         blocks.append({
             "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{crops[i]}", "detail": "low"},
+            "image_url": {"url": f"data:image/png;base64,{crops[i]}", "detail": "high"},
         })
 
     notes = []

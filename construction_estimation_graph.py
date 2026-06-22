@@ -23,7 +23,7 @@ from logs.write_logs import write_logs
 # isn't rejected; the per-segment crops carry the labels, so the full page doesn't
 # need 4x. 1536px is comfortably under the limit and is also Anthropic's recommended
 # max edge for best image understanding.
-_FULL_PAGE_MAX_EDGE = 1536
+_FULL_PAGE_MAX_EDGE = 1024
 
 
 def _render_pdf_blocks(pdf_path: str) -> list[dict]:
@@ -47,14 +47,14 @@ def _render_pdf_blocks(pdf_path: str) -> list[dict]:
 
 class State(TypedDict):
     pdf_path: str
-    palette: str            # detected color palette (hex codes)
-    segment_blocks: list    # pre-computed listing content blocks (text + crop images)
-    agent_output: str       # raw agent text (classification JSON + reasoning)
-    classifications: dict   # parsed: task -> {groups:[{color,page,ids}]} or {count:N}
-    quantities: dict        # task name -> measured quantity (meters or count)
-    annotations: dict       # per-page PNGs + legend marking each task on the plan
-    breakdown: dict         # priced line items + grand total
-    result: str             # human-readable cost report
+    palette: str                      # detected color palette (hex codes)
+    segment_blocks: list              # pre-computed listing content blocks
+    estimation_agent_output: str      # raw agent text (classification JSON + reasoning)
+    agent_classifications: dict       # parsed: task -> {groups:[{color,page,ids}]} or {count:N}
+    measured_quantities: dict         # task name -> measured quantity (meters or count)
+    annotations: dict                 # PNGs from PDFs + legend marking each task on the plan
+    calculated_prices_breakdown: dict # priced line items + grand total
+    result: str                       # human-readable cost report
 
 
 def _extract_classifications(agent_output: str) -> dict:
@@ -150,8 +150,8 @@ def run_estimation(state: State) -> dict:
 
     agent_output = estimation_agent.run_blocks(content)
     classifications = _extract_classifications(agent_output)
-    write_logs("agent_output: " + agent_output)
-    return {"agent_output": agent_output, "classifications": classifications}
+    write_logs("estimation_agent_output: " + agent_output)
+    return {"estimation_agent_output": agent_output, "agent_classifications": classifications}
 
 
 def _measure_group(pdf_path: str, group: dict) -> float:
@@ -172,7 +172,7 @@ def run_measure(state: State) -> dict:
     """
     pdf_path = state["pdf_path"]
     quantities: dict = {}
-    for task_name, info in state["classifications"].items():
+    for task_name, info in state["agent_classifications"].items():
         groups = info.get("groups") or ([info] if "ids" in info else None)
         if groups is not None:
             if task_name.strip().lower().endswith("(per meter)"):
@@ -181,21 +181,21 @@ def run_measure(state: State) -> dict:
                 quantities[task_name] = count_task_groups(pdf_path, groups)
         elif "count" in info:                       # per-unit item with no segments to tag
             quantities[task_name] = info["count"]
-    write_logs("quantities: " + str(quantities))
-    return {"quantities": quantities}
+    write_logs("measured_quantities: " + str(quantities))
+    return {"measured_quantities": quantities}
 
 
 def run_annotate(state: State) -> dict:
     """Draw the agent's task assignments onto the plan (per-page PNGs for the UI)."""
-    annotations = render_annotations(state["pdf_path"], state["classifications"])
+    annotations = render_annotations(state["pdf_path"], state["agent_classifications"])
     write_logs(f"annotations: {len(annotations['pages'])} page(s) marked; "
                f"legend={annotations['legend']}")
     return {"annotations": annotations}
 
 
 def run_pricing(state: State) -> dict:
-    breakdown = price_quantities(state["quantities"])
-    return {"breakdown": breakdown, "result": format_report(breakdown)}
+    breakdown = price_quantities(state["measured_quantities"])
+    return {"calculated_prices_breakdown": breakdown, "result": format_report(breakdown)}
 
 
 graph = (

@@ -48,13 +48,6 @@ model = ChatOpenAI(
     api_key=get_openrouter_api_key()
 )
 
-# ---------------------------------------------------------------------------
-# APPROACH C — select-by-ID with mandatory classify-then-measure (ACTIVE)
-# The tool enumerates every colored segment; the agent must tag ALL of them to
-# a task (or "ignore") before measuring any. This forces deliberate per-segment
-# reasoning and makes every selection visible and auditable in the trace.
-# ---------------------------------------------------------------------------
-
 SYSTEM_PROMPT_SELECT_IDS = (
     "You are a construction cost estimator. "
     "The user message contains: The PDF Plan, the DETECTED COLOR PALETTE (exact hex "
@@ -63,7 +56,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "may not be included). "
     "Use the exact hex codes from the palette in your JSON output.\n\n"
 
-    "--- PHASE 0: DETECT TASKS ---\n"
+    "--- PHASE 1: DETECT TASKS ---\n"
     "  1. Call 'get_available_tasks' to get the list of known task names (the menu).\n"
     "  2. Read the PDF plan. FIRST, look for a LEGEND / KEY (usually a boxed list "
     "on the side or corner of a page that maps each color or symbol to its meaning). Many "
@@ -74,13 +67,19 @@ SYSTEM_PROMPT_SELECT_IDS = (
     #Might Overfit:
     "   e.g.  'solid line | yellow | wall demolition | Wall Demolition (per meter)'\n"
     "         'arc + short line | yellow | door | Door Demolition'\n"
-    #
-    "Text Labels written in the PDF are also a good indication for a task appearing. Read those as well."
+    #   
     "   IMPORTANT: many legends distinguish items by SYMBOL SHAPE while using the SAME color. "
-    "Describe each symbol carefully enough to recognise it later in a small crop or on the plan.\n"
+    "Describe each symbol carefully enough to recognise it later in a small crop or on the plan. "
+    #Might Overfit:
+    "   Also, many legends simply assign a specific color to multiple tasks of the same kind. "
+    "For example red can be assigned for construction - meaning red items are for construction. "
+    "(whether it's door construction/wall construction/window construction depends on it's appearance on the plan itself)."
+    "In that case, don't immediately assume that it's a different task just because the color pattern is not the exact same as in the legend.\n"
+    #
     "  3. Decide which available tasks are actually present (from legend, explicit color "
     "labels, or context). Output each detected task with its EXACT name, page, and how to "
     "identify it. If none are present, say so and stop."
+    "Text Labels written in the PDF are also a good indication for a task appearing. Read those as well."
     "Don't invent new tasks. ONLY use the tasks given from 'get_available_tasks'.\n\n"
 
     "--- PHASE 2: CLASSIFY ---\n"
@@ -102,16 +101,16 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "can carry different labels (e.g. one says 'wall', another says 'kitchen') — the label, not "
     "the shape, decides the task. If the transcribed text names a different element than nearby "
     "segments, it is a DIFFERENT task; never assume it is the same just because it looks similar.\n"
-    "  - MATCH AGAINST THE FULL TASK MENU, NOT JUST PHASE-0: a transcribed label maps to ANY task "
+    "  - MATCH AGAINST THE FULL TASK MENU, NOT JUST PHASE-1: a transcribed label maps to ANY task "
     "from 'get_available_tasks' whose meaning it matches — even if you did NOT list that task in "
-    "Phase 0. Phase 0 is only a first skim and routinely misses tasks; the per-segment label is "
+    "Phase 1. Phase 1 is only a first skim and routinely misses tasks; the per-segment label is "
     "the authoritative signal. Translate the label if needed (e.g. 'מטבח'/'kitchen' -> a Kitchen "
     "task; 'חלון'/'window' -> a Window task) and tag the segment to that available task. NEVER "
     "tag a segment 'ignore' when its transcribed label matches an available task just because the "
-    "task was absent from your Phase-0 list — add the task instead.\n"
+    "task was absent from your Phase-1 list — add the task instead.\n"
     "  - Never ignore a segment based on geometry alone — if it has a task-related label, tag it.\n"
     "  - LEGEND MATCHING: compare each segment's shape (from its crop if given, else from the "
-    "full-page plan image at its center) to your Phase-0 legend table. When a color is used for "
+    "full-page plan image at its center) to your Phase-1 legend table. When a color is used for "
     "multiple tasks (e.g. yellow = walls AND doors), the shape is the ONLY way to tell them apart. "
     "Assign the segment to the task whose legend symbol matches.\n"
     
@@ -167,109 +166,11 @@ TOOLS_SELECT_IDS = [
     count_outline_shapes_by_color,
 ]
 
-# ---------------------------------------------------------------------------
-# APPROACH A — coordinate-only (commented out)
-# Agent visually identifies every segment and passes coordinates directly.
-# NOTE: GPT-4o cannot ground coordinates from an image — it fabricates round
-# placeholder values — so this approach does not work in practice.
-# ---------------------------------------------------------------------------
-
-SYSTEM_PROMPT_COORDS_ONLY = (
-    "You are a construction cost estimator. "
-    "The user will give you a list of detected construction tasks and a PDF path. "
-    "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
-    "then calculate its cost accordingly:\n\n"
-
-    "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
-    "Always pass that page number to the tools — both tools accept a 'page_number' argument "
-    "(1-indexed, default 1). If no page is specified, use page 1.\n\n"
-
-    "IF the task is measured in meters (e.g. wall demolition, wall construction, "
-    "pipe installation, lighting profiles — tasks drawn as lines or shapes on the floor plan):\n"
-    "  1. Read the relevant PDF page visually. Identify every segment that belongs to this task.\n"
-    "  2. For each segment, estimate its start and end points as fractions of the page dimensions "
-    "(x=0.0 is the left edge, x=1.0 is the right edge; y=0.0 is the top edge, y=1.0 is the "
-    "bottom edge). Collect all segments as [[x1,y1,x2,y2], ...] pairs.\n"
-    "  3. Call 'measure_total_length_by_coordinates' ONCE with all segments for this task. "
-    "The tool sums them and returns the total in meters.\n"
-    "  4. Call 'get_task_price' with the exact task name to get the unit price per meter.\n"
-    "  5. Call 'multiply_numbers' to compute total cost = length × unit price.\n\n"
-
-    "ELSE the task is per-unit (e.g. door demolition, kitchen demolition, bathroom renovation — "
-    "tasks that appear as discrete countable items: doors, fixtures, rooms, or labeled elements):\n"
-    "  1. If the items are drawn as colored outlines without fill (e.g. door arcs, window symbols), "
-    "call 'count_outline_shapes_by_color' with the PDF path and the stroke color of those items. "
-    "Sanity-check the returned sizes — door widths are typically 70–100 cm. "
-    "If the items are rooms or labeled areas, read the PDF visually and count them instead.\n"
-    "  2. Call 'get_task_price' with the exact task name to get the unit price.\n"
-    "  3. Call 'multiply_numbers' to compute total cost = count × unit price.\n\n"
-
-    "Report each task's quantity (meters or count), unit price, and total cost. "
-    "Finish with an overall grand total.\n\n"
-    "IMPORTANT: Do not write a final summary until you have called "
-    "'get_task_price' and 'multiply_numbers' for every task. "
-    "If tasks remain unpriced, your next output must be a tool call."
-)
-
-# TOOLS_COORDS_ONLY = [
-#     get_task_price_tool,
-#     multiply_numbers,
-#     measure_total_length_by_coordinates,
-#     count_outline_shapes_by_color,
-# ]
-
-# ---------------------------------------------------------------------------
-# APPROACH B — both color-based and coordinate-based tools (commented out)
-# Agent picks the right measurement approach per task.
-# ---------------------------------------------------------------------------
-
-# SYSTEM_PROMPT_BOTH_TOOLS = (
-#     "You are a construction cost estimator. "
-#     "The user will give you a list of detected construction tasks and a PDF path. "
-#     "For each task, determine whether it is a **per-meter** task or a **per-unit** task, "
-#     "then calculate its cost accordingly:\n\n"
-#
-#     "The task list may indicate which page each task appears on (e.g. 'Page 2'). "
-#     "Always pass that page number to the tools — both tools accept a 'page_number' argument "
-#     "(1-indexed, default 1). If no page is specified, use page 1.\n\n"
-#
-#     "IF the task is measured in meters:\n"
-#     "  Choose ONE measurement approach and stick to it — do not use both for the same task:\n"
-#     "  OPTION 1 — color-based (efficient for uniform solid/stroke elements): "
-#     "Read the page and observe how the elements are drawn. "
-#     "Call 'get_wall_lengths_by_color' with the color and drawing_type "
-#     "('fill', 'stroke', or 'any'). If it returns 0 results, try a different drawing_type.\n"
-#     "  OPTION 2 — coordinate-based (for complex/composite/partial elements): "
-#     "Identify every segment visually, estimate start/end points as page-fraction coordinates "
-#     "(0.0–1.0), and call 'measure_total_length_by_coordinates' ONCE with all segments.\n"
-#     "  Then: call 'get_task_price' and 'multiply_numbers'.\n\n"
-#
-#     "ELSE the task is per-unit:\n"
-#     "  1. If items are colored outlines without fill, call 'count_outline_shapes_by_color'.\n"
-#     "     If items are rooms or labeled areas, count visually.\n"
-#     "  2. Call 'get_task_price' and 'multiply_numbers'.\n\n"
-#
-#     "Report each task's quantity, unit price, and total cost. "
-#     "Finish with an overall grand total.\n\n"
-#     "IMPORTANT: Do not write a final summary until every task is priced. "
-#     "If tasks remain unpriced, your next output must be a tool call."
-# )
-#
-# TOOLS_BOTH = [
-#     get_task_price_tool,
-#     multiply_numbers,
-#     get_wall_lengths_by_color,
-#     count_outline_shapes_by_color,
-#     measure_total_length_by_coordinates,
-# ]
-
-# ---------------------------------------------------------------------------
-
 agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).with_memory().pdf_reader().tool_images().with_todos().build()
+).pdf_reader().tool_images().with_memory().with_todos().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

@@ -5,7 +5,13 @@ import statistics
 from pdf_tools.color_utils import _is_chromatic
 
 _MIN_UNITS = 10
-_PLAN_WIDTH_FRACTION = 0.70  # title blocks occupy the rightmost ~25-30% of the page
+# Fraction of the page width that is floor plan; the rest (rightmost strip) is the
+# title block, excluded from color/segment detection. 0.70 was too aggressive: on
+# plans where the layout extends to the right it sliced through the floor plan and
+# dropped real segments (e.g. the vertical piece joining the two halves of a kitchen
+# outline, and window-demolition marks), which then broke connectivity counting.
+# 0.76 keeps that content while still excluding the title block (which starts ~0.78).
+_PLAN_WIDTH_FRACTION = 0.76
 
 
 def _calibrate(page) -> float:

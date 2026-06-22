@@ -34,6 +34,12 @@ _COLOCATED_TOL = 0.03   # center radius (fraction of page) for the co-location c
 # ---------------------------------------------------------------------------
 # Per-segment image crops
 # ---------------------------------------------------------------------------
+# Master switch: when False, list_colored_segments emits ONLY the text attribute
+# lines (no per-segment image crops). A strong vision model can locate a segment on
+# the full-page plan image from its center (x%,y%) + geometry, so the crops — which
+# dominate token cost — may be unnecessary. Flip to True to send crops again if the
+# model struggles to read labels without them.
+_INCLUDE_CROPS = False
 _CROP_PAD = 55         # PDF units of context to include around the segment bbox
 _CROP_MIN_SIDE = 130   # minimum crop box side (units) so a thin sliver still shows context
 _CROP_TARGET_PX = 768  # approximate output image size in pixels (large enough that

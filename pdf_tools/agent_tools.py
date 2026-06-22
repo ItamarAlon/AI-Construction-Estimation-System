@@ -18,6 +18,7 @@ from pdf_tools.calibration import _calibrate, _PLAN_WIDTH_FRACTION, _MIN_UNITS
 from pdf_tools.segment_geometry import (
     _collect_colored_segments, _duplicate_canonical, _colocated_counts,
     _collect_black_lines, _describe_segment, _crop_segment_png, _ON_WALL_ENABLED,
+    _INCLUDE_CROPS,
 )
 
 
@@ -386,20 +387,30 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> li
     described = [_describe_segment(s, page, cm_per_unit, black_lines) for s in segs]
     canonical = _duplicate_canonical(segs, page)
     colocated = _colocated_counts(segs, page)
-    crops = [_crop_segment_png(page, s["rect"]) for s in segs]
+    crops = [_crop_segment_png(page, s["rect"]) for s in segs] if _INCLUDE_CROPS else None
     doc.close()
 
     if not described:
         return f"No {color} segments found in the floor plan area."
 
     ns = _namespace(color, page_number)
+    if _INCLUDE_CROPS:
+        intro = (
+            "For each segment below you get neutral geometry AND a zoomed image crop of that "
+            "spot on the plan (with surrounding context). Decide for yourself what each one is "
+            "-- read any text label visible in the crop; it is the strongest signal.\n"
+        )
+    else:
+        intro = (
+            "For each segment below you get neutral geometry only. Use its center (x%,y%) to "
+            "locate it on the full-page plan image and read any text label next to it there; "
+            "the label is the strongest signal.\n"
+        )
     blocks: list[dict] = [{
         "type": "text",
         "text": (
             f"Found {len(described)} {color} segment(s) on page {page_number} (IDs prefixed '{ns}-').\n"
-            "For each segment below you get neutral geometry AND a zoomed image crop of that "
-            "spot on the plan (with surrounding context). Decide for yourself what each one is "
-            "-- read any text label visible in the crop; it is the strongest signal.\n"
+            f"{intro}"
             "Attributes: length | orientation | solid-fill or thin-stroke | straight or curved "
             "| center (x%,y%) | clusterxN (segments sharing this center)."
         ),
@@ -425,10 +436,11 @@ def list_colored_segments(pdf_path: str, color: str, page_number: int = 1) -> li
                 f" | center ({d['cx']}%,{d['cy']}%){cluster}{on_wall}{dup}"
             ),
         })
-        blocks.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{crops[i]}", "detail": "high"},
-        })
+        if _INCLUDE_CROPS:
+            blocks.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{crops[i]}", "detail": "high"},
+            })
 
     notes = []
     if has_cluster:

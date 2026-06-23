@@ -6,6 +6,7 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from pdf_calculator_agent import agent as estimation_agent
+from construction_tasks_prices.read_construction_tasks_prices import get_available_tasks
 from wall_measurement_tool import (
     list_colored_segments,
     measure_segments_by_id,
@@ -130,9 +131,11 @@ def run_estimation(state: State) -> dict:
     """
     pdf_path = state["pdf_path"]
 
-    # Text preamble: PDF path, palette, and instruction summary
+    # Text preamble: PDF path, palette, task menu, and instruction summary
+    task_list = "\n".join(f"  - {t}" for t in get_available_tasks())
     preamble = (
         f"{pdf_path}\n\n"
+        f"AVAILABLE TASKS (use exact names in your JSON output):\n{task_list}\n\n"
         f"{state['palette']}\n\n"
         "The segment listings for all palette colors (attributes + zoomed crops) "
         "are provided below. Use the exact hex codes from the palette in your JSON output."

@@ -32,7 +32,7 @@ def multiply_numbers(num1: float, num2: float) -> float:
 
 
 model = ChatOpenAI(
-    model="openai/gpt-4o",
+    model="google/gemini-3.5-flash",
     temperature=0.2,
     base_url="https://openrouter.ai/api/v1",
     api_key=get_openrouter_api_key()
@@ -84,7 +84,8 @@ agent = AgentBuilder(
     )
 ).with_memory().pdf_reader().ask_user_when_needed().with_todos().build()
 
-PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
+#PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
+PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
 
 if __name__ == "__main__":
     question = PDF_PATH

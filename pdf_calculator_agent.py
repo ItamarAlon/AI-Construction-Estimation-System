@@ -2,9 +2,7 @@ from pathlib import Path
 import sys
 
 from langchain.tools import tool
-from construction_tasks_prices.read_construction_tasks_prices import (
-    get_available_tasks_tool,
-)
+
 from wall_measurement_tool import (
     get_wall_lengths_by_color,
     count_outline_shapes_by_color,
@@ -57,7 +55,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "Use the exact hex codes from the palette in your JSON output.\n\n"
 
     "--- PHASE 1: DETECT TASKS ---\n"
-    "  1. Call 'get_available_tasks' to get the list of known task names (the menu).\n"
+    "  1. The AVAILABLE TASKS menu is already in the user message — do NOT call any tool to fetch it.\n"
     "  2. Read the PDF plan. FIRST, look for a LEGEND / KEY (usually a boxed list "
     "on the side or corner of a page that maps each color or symbol to its meaning). Many "
     "plans have none -- that is fine, just move on. If one EXISTS, it is the authoritative "
@@ -80,7 +78,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "labels, or context). Output each detected task with its EXACT name, page, and how to "
     "identify it. If none are present, say so and stop."
     "Text Labels written in the PDF are also a good indication for a task appearing. Read those as well."
-    "Don't invent new tasks. ONLY use the tasks given from 'get_available_tasks'.\n\n"
+    "Don't invent new tasks. ONLY use tasks from the AVAILABLE TASKS menu.\n\n"
 
     "--- PHASE 2: CLASSIFY ---\n"
     "The segment listings are already in this message (sections headed '=== #hex, page N ==='). "
@@ -102,7 +100,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "the shape, decides the task. If the transcribed text names a different element than nearby "
     "segments, it is a DIFFERENT task; never assume it is the same just because it looks similar.\n"
     "  - MATCH AGAINST THE FULL TASK MENU, NOT JUST PHASE-1: a transcribed label maps to ANY task "
-    "from 'get_available_tasks' whose meaning it matches — even if you did NOT list that task in "
+    "from the AVAILABLE TASKS menu whose meaning it matches — even if you did NOT list that task in "
     "Phase 1. Phase 1 is only a first skim and routinely misses tasks; the per-segment label is "
     "the authoritative signal. Translate the label if needed (e.g. 'מטבח'/'kitchen' -> a Kitchen "
     "task; 'חלון'/'window' -> a Window task) and tag the segment to that available task. NEVER "
@@ -162,7 +160,6 @@ SYSTEM_PROMPT_SELECT_IDS = (
 )
 
 TOOLS_SELECT_IDS = [
-    get_available_tasks_tool,
     count_outline_shapes_by_color,
 ]
 

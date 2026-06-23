@@ -6,6 +6,8 @@ import pymupdf as fitz
 import base64
 import re
 
+EXTRA_RESOLUTION = 1
+
 @before_agent
 def pdf_injection_middleware(state, runtime):
     """Detect a PDF path in the last user message and expand it into content blocks.
@@ -65,8 +67,8 @@ def _pdf_to_content_blocks(pdf_path: str) -> list:
         text = page.get_text().strip()
         if text:
             blocks.append({"type": "text", "text": f"Page {i} extracted text:\n{text}"})
-        # Render at 4× resolution for small Hebrew text and fine plan details
-        pix = page.get_pixmap(matrix=fitz.Matrix(4, 4))
+        # Render at EXTRA_RESOLUTION× resolution for small Hebrew text and fine plan details
+        pix = page.get_pixmap(matrix=fitz.Matrix(EXTRA_RESOLUTION, EXTRA_RESOLUTION))
         b64 = base64.b64encode(pix.tobytes("png")).decode()
         blocks.append({"type": "text", "text": f"Page {i} image:"})
         blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})

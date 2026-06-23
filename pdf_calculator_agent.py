@@ -20,25 +20,6 @@ from langchain_openai import ChatOpenAI
 from helpers.agent_wrap.AgentBuilder import AgentBuilder
 from get_key import get_openrouter_api_key
 
-
-@tool
-def sum_numbers(numbers: list[float]) -> float:
-    """Input: list of numbers. Output: their sum."""
-    print("numbers to sum:", numbers)
-    return sum(numbers)
-
-
-@tool
-def multiply_numbers(num1: float, num2: float) -> float:
-    """Input: two numbers. Output: num1 * num2."""
-    print(f"{num1} * {num2} = {num1 * num2}")
-    return num1 * num2
-
-
-# Vision model: gpt-4o reads small Hebrew crop labels unreliably (non-deterministic
-# OCR run-to-run), which caused tasks like Kitchen Removal to be missed. Claude reads
-# the same crops reliably, so the classification agent uses Claude via OpenRouter.
-# (Other Claude slugs available on this account: claude-sonnet-4 / -4.5, claude-opus-4.x.)
 model = ChatOpenAI(
     model="google/gemini-3.5-flash",
     temperature=0.2,
@@ -160,14 +141,14 @@ SYSTEM_PROMPT_SELECT_IDS = (
 )
 
 TOOLS_SELECT_IDS = [
-    count_outline_shapes_by_color,
+    #count_outline_shapes_by_color,
 ]
 
 agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).pdf_reader().tool_images().with_memory().with_todos().build()
+).pdf_reader().tool_images().with_memory().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

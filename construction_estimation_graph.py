@@ -70,7 +70,7 @@ def _extract_classifications(agent_output: str) -> dict:
 
 
 def run_detect_colors(state: State) -> dict:
-    """Plain Python: list the real colors per page so the agent picks exact hex codes."""
+    """List the real colors per page so the agent picks exact hex codes."""
     pdf_path = state["pdf_path"]
     doc = fitz.open(pdf_path)
     n_pages = len(doc)

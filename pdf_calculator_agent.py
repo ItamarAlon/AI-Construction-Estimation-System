@@ -42,7 +42,7 @@ def multiply_numbers(num1: float, num2: float) -> float:
 # the same crops reliably, so the classification agent uses Claude via OpenRouter.
 # (Other Claude slugs available on this account: claude-sonnet-4 / -4.5, claude-opus-4.x.)
 model = ChatOpenAI(
-    model="anthropic/claude-sonnet-4.6",
+    model="google/gemini-3.5-flash",
     temperature=0.2,
     base_url="https://openrouter.ai/api/v1",
     api_key=get_openrouter_api_key()
@@ -72,7 +72,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "Describe each symbol carefully enough to recognise it later in a small crop or on the plan. "
     #Might Overfit:
     "   Also, many legends simply assign a specific color to multiple tasks of the same kind. "
-    "For example red can be assigned for construction - meaning red items are for construction. "
+    "For example green can be assigned for construction - meaning green items are for construction. "
     "(whether it's door construction/wall construction/window construction depends on it's appearance on the plan itself)."
     "In that case, don't immediately assume that it's a different task just because the color pattern is not the exact same as in the legend.\n"
     #

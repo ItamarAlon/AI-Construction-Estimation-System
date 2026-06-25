@@ -89,12 +89,42 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "task; 'חלון'/'window' -> a Window task) and tag the segment to that available task. NEVER "
     "tag a segment 'ignore' when its transcribed label matches an available task just because the "
     "task was absent from your Phase-1 list — add the task instead.\n"
+
+    # note: recessed-panel / no-loose-match fix — require a CLEAR label match, else ignore
+    "  - REQUIRE A CLEAR MATCH, OTHERWISE IGNORE: 'matches' means the label DIRECTLY names the task "
+    "or is a clear translation/synonym of it (e.g. 'מטבח'=kitchen, 'עיבוי קיר'=wall thickening) — NOT "
+    "merely a related-sounding element. If a read label names something with no clearly matching task "
+    "in the menu (e.g. 'פנל שקוע' / recessed panel), tag it 'ignore (no matching task)'. Do NOT force "
+    "a label onto a loosely-related task: a recessed panel is NOT wall thickening; a baseboard is NOT "
+    "a wall. Tag 'Wall thickening' ONLY for a label that literally says wall thickening ('עיבוי קיר').\n"
+
     "  - Never ignore a segment based on geometry alone — if it has a task-related label, tag it.\n"
     "  - LEGEND MATCHING: compare each segment's shape (from its crop if given, else from the "
     "full-page plan image at its center) to your Phase-1 legend table. When a color is used for "
     "multiple tasks (e.g. yellow = walls AND doors), the shape is the ONLY way to tell them apart. "
     "Assign the segment to the task whose legend symbol matches.\n"
-    
+
+    # note: rule 1 of 2 — associate labels by leader line, not by nearest distance
+    "  - LABELS ATTACH BY LEADER LINE, NOT BY PROXIMITY: a text label usually connects to the "
+    "element it describes with a thin leader line or arrow. Associate a segment with the label "
+    "whose leader line actually touches or points to THAT segment — not with whatever label is "
+    "physically closest. A nearer label may belong to a different element, and a segment's own "
+    "label may sit farther away but be connected to it by a line. Before tagging a segment from a "
+    "label, check that the label's leader line really reaches this segment; if a closer label "
+    "points elsewhere (its line runs to a different element), do NOT use it.\n"
+
+    # note: rule 2 of 2 — legend color default is the baseline; require leader-line evidence to override
+    "  - COLOR DEFAULT IS THE BASELINE; OVERRIDE ONLY ON CONNECTED EVIDENCE: when a color has a "
+    "default meaning in the legend (e.g. blue = building wall) plus rarer labeled exceptions on "
+    "the same color (e.g. a few segments labeled 'wall thickening'), treat the default task as the "
+    "baseline for every segment of that color. Reassign a segment to the exception task ONLY when "
+    "the exception's label LITERALLY names that exception task AND its leader line is connected to "
+    "THAT specific segment. A different element drawn in the same color (e.g. a recessed panel) is "
+    "NOT the exception — do not reassign it. Do NOT downgrade or reassign a segment away from the "
+    "default just because an exception label is nearby — an exception label next to a junction "
+    "belongs only to the element its line reaches, so the connected wall keeps the default. When in "
+    "doubt, keep the segment on the color's default task.\n"
+
     # "  - ROOM / AREA OUTLINES: a rectangle or L-shape surrounding a labeled room or area "                                                                                   
     # "(e.g. a box around text that says 'kitchen', 'bathroom') is a per-unit task "                                                                                                
     # "marker — tag it to the matching task (Kitchen Demolition, Kitchen Removal, etc.). "                                                                                     
@@ -150,7 +180,7 @@ agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).pdf_reader(max_edge=1024).tool_images().with_memory().build()
+).pdf_reader(max_edge=3072).tool_images().with_memory().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

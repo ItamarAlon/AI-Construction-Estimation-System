@@ -47,6 +47,45 @@ _CROP_TARGET_PX = 768  # approximate output image size in pixels (large enough t
 _CROP_MAX_ZOOM = 12.0  # cap zoom so tiny segments don't render huge images
 
 
+def _straight_runs(drawing):
+    """If a drawing is a multi-wall polyline (long straight edges that turn a
+    corner), return its long line edges as (Rect, length_units); otherwise None.
+
+    Returning None means "keep this drawing as a single bbox segment". That
+    covers two cases that must NOT be split:
+      - a single straight wall bar (its long edges are all parallel), and
+      - a compact hatch/fill patch like a thickening niche (no long edges, just
+        many short hatch strokes) — splitting it would shatter the patch and the
+        short strokes would fall below _MIN_UNITS.
+    Drawings containing a curve (e.g. a door arc) are never split, so per-unit
+    symbols stay intact for the connectivity counter.
+    """
+    if any(it[0] == "c" for it in drawing["items"]):
+        return None
+    long_lines = []
+    horiz = vert = False
+    for it in drawing["items"]:
+        if it[0] != "l":
+            continue
+        a, b = it[1], it[2]
+        length = math.hypot(b.x - a.x, b.y - a.y)
+        if length < _MIN_UNITS:
+            continue
+        long_lines.append((a, b, length))
+        if abs(b.x - a.x) >= abs(b.y - a.y):
+            horiz = True
+        else:
+            vert = True
+    # Split only when the long edges run in BOTH directions — the signature of a
+    # polyline turning a corner (an L/U/room outline), not one straight bar.
+    if len(long_lines) >= 2 and horiz and vert:
+        return [
+            (fitz.Rect(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y)), length)
+            for a, b, length in long_lines
+        ]
+    return None
+
+
 def _collect_colored_segments(page, color: str) -> list[dict]:
     """Deterministic, ordered list of colored vector segments in the plan area.
 
@@ -55,6 +94,11 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
     stable across the two calls. Identical/duplicate paths are merged, and a
     segment is flagged 'filled' if any path at that location has a chromatic
     fill of the target color (otherwise it is an outline/stroke).
+
+    A multi-wall polyline (an L/U/room outline drawn as one path) is split into
+    its individual straight edges via _straight_runs, so each wall edge is its
+    own tight, correctly-measured segment instead of one fat bounding box that
+    swallows neighbours and under-reports its true length.
     """
     max_x = page.rect.width * _PLAN_WIDTH_FRACTION
     by_key: dict[tuple, dict] = {}
@@ -68,26 +112,31 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
         if not (fill_match or stroke_match):
             continue
 
-        rect = drawing["rect"]
-        if (rect.x0 + rect.x1) / 2 >= max_x:
-            continue
-        length_units = max(rect.width, rect.height)
-        if length_units < _MIN_UNITS:
-            continue
-
         has_curve = any(it[0] == "c" for it in drawing["items"])
-        key = (round(rect.x0, 1), round(rect.y0, 1), round(rect.x1, 1), round(rect.y1, 1))
-        if key not in by_key:
-            by_key[key] = {
-                "rect": rect,
-                "length_units": length_units,
-                "filled": bool(fill_match),
-                "curved": has_curve,
-            }
-            order.append(key)
+        runs = _straight_runs(drawing)
+        if runs is None:
+            rect = drawing["rect"]
+            candidates = [(rect, max(rect.width, rect.height), has_curve)]
         else:
-            by_key[key]["filled"] = by_key[key]["filled"] or bool(fill_match)
-            by_key[key]["curved"] = by_key[key]["curved"] or has_curve
+            candidates = [(r, length, False) for r, length in runs]
+
+        for rect, length_units, curved in candidates:
+            if (rect.x0 + rect.x1) / 2 >= max_x:
+                continue
+            if length_units < _MIN_UNITS:
+                continue
+            key = (round(rect.x0, 1), round(rect.y0, 1), round(rect.x1, 1), round(rect.y1, 1))
+            if key not in by_key:
+                by_key[key] = {
+                    "rect": rect,
+                    "length_units": length_units,
+                    "filled": bool(fill_match),
+                    "curved": curved,
+                }
+                order.append(key)
+            else:
+                by_key[key]["filled"] = by_key[key]["filled"] or bool(fill_match)
+                by_key[key]["curved"] = by_key[key]["curved"] or curved
 
     return [by_key[k] for k in order]
 

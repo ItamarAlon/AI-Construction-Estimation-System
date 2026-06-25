@@ -6,7 +6,7 @@ from skill_loader.SkillMiddleware import SkillMiddleware
 from langchain.agents.middleware import ToolCallLimitMiddleware
 from langchain_mcp_adapters.sessions import StdioConnection, StreamableHttpConnection
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from helpers.pdf_injection_middleware import pdf_injection_middleware
+
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -77,8 +77,9 @@ class AgentBuilder:
         self.kwargs["checkpointer"] = checkpointer
         return self
 
-    def pdf_reader(self):
-        self.__add_middleware(pdf_injection_middleware)
+    def pdf_reader(self, max_edge: int | None = None):
+        from helpers.pdf_injection_middleware import make_pdf_injection_middleware
+        self.__add_middleware(make_pdf_injection_middleware(max_edge))
         return self
 
     def tool_images(self):

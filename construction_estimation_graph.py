@@ -1,4 +1,3 @@
-import base64
 import json
 import re
 import pymupdf as fitz
@@ -18,32 +17,6 @@ from calculate_prices import price_quantities, format_report
 from render_annotations import render_annotations
 from logs.write_logs import write_logs
 
-
-# Anthropic caps each image's longest edge in many-image requests (we send the full
-# page plus a crop per segment). Keep the full-page render under this so the request
-# isn't rejected; the per-segment crops carry the labels, so the full page doesn't
-# need 4x. 1536px is comfortably under the limit and is also Anthropic's recommended
-# max edge for best image understanding.
-_FULL_PAGE_MAX_EDGE = 1024
-
-
-def _render_pdf_blocks(pdf_path: str) -> list[dict]:
-    """Render every page of a PDF as image content blocks (same as pdf_injection_middleware)."""
-    doc = fitz.open(pdf_path)
-    blocks = [{"type": "text", "text": f"PDF: {pdf_path} ({len(doc)} page(s))"}]
-    for i, page in enumerate(doc, 1):
-        text = page.get_text().strip()
-        if text:
-            blocks.append({"type": "text", "text": f"Page {i} extracted text:\n{text}"})
-        # Scale so the longest edge ~= _FULL_PAGE_MAX_EDGE (never upscale past 4x).
-        longest_pt = max(page.rect.width, page.rect.height)
-        zoom = min(4.0, _FULL_PAGE_MAX_EDGE / longest_pt) if longest_pt else 4.0
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-        b64 = base64.b64encode(pix.tobytes("png")).decode()
-        blocks.append({"type": "text", "text": f"Page {i} image:"})
-        blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
-    doc.close()
-    return blocks
 
 
 class State(TypedDict):
@@ -125,13 +98,11 @@ def run_enumerate(state: State) -> dict:
 def run_estimation(state: State) -> dict:
     """Run the classification agent with pre-enumerated segment data.
 
-    Builds the initial HumanMessage as a content list so segment crop images
-    are delivered inline (no tool round-trip). The pdf_injection_middleware
-    becomes a no-op when content is already a list, so we inject PDF pages here.
+    The preamble text block contains the PDF path, which the pdf_injection_middleware
+    detects and replaces with rendered page images before the first model call.
     """
     pdf_path = state["pdf_path"]
 
-    # Text preamble: PDF path, palette, task menu, and instruction summary
     task_list = "\n".join(f"  - {t}" for t in get_available_tasks())
     preamble = (
         f"{pdf_path}\n\n"
@@ -141,15 +112,7 @@ def run_estimation(state: State) -> dict:
         "are provided below. Use the exact hex codes from the palette in your JSON output."
     )
 
-    # PDF page images (pdf_injection_middleware is a no-op when content is already
-    # a list, so we render the pages ourselves here)
-    pdf_blocks = _render_pdf_blocks(pdf_path)
-
-    content = (
-        [{"type": "text", "text": preamble}]
-        + pdf_blocks
-        + state["segment_blocks"]
-    )
+    content = [{"type": "text", "text": preamble}] + state["segment_blocks"]
 
     agent_output = estimation_agent.run_blocks(content)
     classifications = _extract_classifications(agent_output)

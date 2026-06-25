@@ -41,6 +41,8 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "on the side or corner of a page that maps each color or symbol to its meaning). Many "
     "plans have none -- that is fine, just move on. If one EXISTS, it is the authoritative "
     "source for what each color/symbol represents. "
+    "Text labels written in the PDF are the authoritative source for what an item on the map represents "
+    "and which task it belongs to. Many plans have none, that is fine, just move on."
     "TRANSCRIBE it into an explicit table:\n"
     "     <short symbol description> | <color> | <what it means> | <matching task or 'none'>\n"
     #Might Overfit:
@@ -55,11 +57,11 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "(whether it's door construction/wall construction/window construction depends on it's appearance on the plan itself)."
     "In that case, don't immediately assume that it's a different task just because the color pattern is not the exact same as in the legend.\n"
     #
-    "  3. Decide which available tasks are actually present (from legend, explicit color "
-    "labels, or context). Output each detected task with its EXACT name, page, and how to "
+    "  3. Decide which available tasks are actually present (from legend/explicit text labels/ "
+    "context). Output each detected task with its EXACT name, page, and how to "
     "identify it. If none are present, say so and stop."
-    "Text Labels written in the PDF are also a good indication for a task appearing. Read those as well."
-    "Don't invent new tasks. ONLY use tasks from the AVAILABLE TASKS menu.\n\n"
+    #"Text Labels written in the PDF are also a good indication for a task appearing. Read those as well."
+    #"Don't invent new tasks. ONLY use tasks from the AVAILABLE TASKS menu.\n\n"
 
     "--- PHASE 2: CLASSIFY ---\n"
     "The segment listings are already in this message (sections headed '=== #hex, page N ==='). "
@@ -148,7 +150,7 @@ agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).pdf_reader().tool_images().with_memory().build()
+).pdf_reader(max_edge=1024).tool_images().with_memory().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

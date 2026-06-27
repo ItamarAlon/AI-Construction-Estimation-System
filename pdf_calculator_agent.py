@@ -56,6 +56,13 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "For example green can be assigned for construction - meaning green items are for construction. "
     "(whether it's door construction/wall construction/window construction depends on it's appearance on the plan itself)."
     "In that case, don't immediately assume that it's a different task just because the color pattern is not the exact same as in the legend.\n"
+    # note: points the agent to the legend-color-task-group skill for category legends
+    "   WHEN a legend maps a color (or symbol) to a BROAD CATEGORY of work — a general word "
+    "like 'building'/'בנייה', 'demolition'/'הריסה ופירוק', 'plumbing'/'אינסטלציה' — that covers "
+    "MORE THAN ONE task in the AVAILABLE TASKS menu, load the 'legend-color-task-group' skill "
+    "(call load_skill once). It tells you to map that color to the whole GROUP of tasks under the "
+    "category and how to pick the right one for each segment. Do NOT load it when a color maps "
+    "cleanly to a single task.\n"
     #
     "  3. Decide which available tasks are actually present (from legend/explicit text labels/ "
     "context). Output each detected task with its EXACT name, page, and how to "
@@ -104,7 +111,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "multiple tasks (e.g. yellow = walls AND doors), the shape is the ONLY way to tell them apart. "
     "Assign the segment to the task whose legend symbol matches.\n"
 
-    # note: rule 1 of 2 — associate labels by leader line, not by nearest distance
+    # rule: associate labels by leader line, not by nearest distance
     "  - LABELS ATTACH BY LEADER LINE, NOT BY PROXIMITY: a text label usually connects to the "
     "element it describes with a thin leader line or arrow. Associate a segment with the label "
     "whose leader line actually touches or points to THAT segment — not with whatever label is "
@@ -112,18 +119,6 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "label may sit farther away but be connected to it by a line. Before tagging a segment from a "
     "label, check that the label's leader line really reaches this segment; if a closer label "
     "points elsewhere (its line runs to a different element), do NOT use it.\n"
-
-    # note: rule 2 of 2 — legend color default is the baseline; require leader-line evidence to override
-    "  - COLOR DEFAULT IS THE BASELINE; OVERRIDE ONLY ON CONNECTED EVIDENCE: when a color has a "
-    "default meaning in the legend (e.g. blue = building wall) plus rarer labeled exceptions on "
-    "the same color (e.g. a few segments labeled 'wall thickening'), treat the default task as the "
-    "baseline for every segment of that color. Reassign a segment to the exception task ONLY when "
-    "the exception's label LITERALLY names that exception task AND its leader line is connected to "
-    "THAT specific segment. A different element drawn in the same color (e.g. a recessed panel) is "
-    "NOT the exception — do not reassign it. Do NOT downgrade or reassign a segment away from the "
-    "default just because an exception label is nearby — an exception label next to a junction "
-    "belongs only to the element its line reaches, so the connected wall keeps the default. When in "
-    "doubt, keep the segment on the color's default task.\n"
 
     # "  - ROOM / AREA OUTLINES: a rectangle or L-shape surrounding a labeled room or area "                                                                                   
     # "(e.g. a box around text that says 'kitchen', 'bathroom') is a per-unit task "                                                                                                
@@ -180,7 +175,7 @@ agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).pdf_reader(max_edge=3072).tool_images().with_memory().build()
+).pdf_reader(max_edge=3072).tool_images().skilled().with_memory().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

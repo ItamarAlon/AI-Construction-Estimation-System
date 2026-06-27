@@ -124,8 +124,7 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "default just because an exception label is nearby — an exception label next to a junction "
     "belongs only to the element its line reaches, so the connected wall keeps the default. When in "
     "doubt, keep the segment on the color's default task.\n"
-    
-    
+
     # "  - ROOM / AREA OUTLINES: a rectangle or L-shape surrounding a labeled room or area "                                                                                   
     # "(e.g. a box around text that says 'kitchen', 'bathroom') is a per-unit task "                                                                                                
     # "marker — tag it to the matching task (Kitchen Demolition, Kitchen Removal, etc.). "                                                                                     

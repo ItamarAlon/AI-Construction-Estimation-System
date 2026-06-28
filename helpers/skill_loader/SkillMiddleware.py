@@ -33,39 +33,55 @@ class SkillMiddleware(AgentMiddleware):
 
     tools = [load_skill]
 
-    def __init__(self, *skills_folders: str | None):
+    def __init__(self, *skills_folders: str | None, eager: list[str] | None = None):
         SkillMiddleware._registry = SkillRegistry(*skills_folders)
         self._loaded_skills: set[str] = set()
+        # Skills named here are injected IN FULL into the system prompt up front,
+        # instead of being lazy-loaded via the load_skill tool. Use this for skills
+        # that are needed on most runs and/or when each model turn is expensive (e.g.
+        # large images in context), where the lazy-load round-trip costs more than
+        # just always including the (small) skill body.
+        self._eager_names: list[str] = list(eager or [])
 
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Sync: Inject skill descriptions into system prompt."""
-        available_skills = [
-            skill for skill in self._registry.get_all_skills() if skill.get("name") not in self._loaded_skills
+        """Sync: Inject eager skills in full + lazy skill descriptions into system prompt."""
+        all_skills = list(self._registry.get_all_skills())
+        eager_skills = [s for s in all_skills if s.get("name") in self._eager_names]
+        # Lazy skills: everything not eager and not already loaded this run.
+        lazy_skills = [
+            s for s in all_skills
+            if s.get("name") not in self._eager_names and s.get("name") not in self._loaded_skills
         ]
-        if available_skills:
+
+        addendum_parts: list[str] = []
+        # Eager skills: inject full content up front — no load_skill round-trip needed.
+        for skill in eager_skills:
+            addendum_parts.append(
+                f"\n\n## Skill: {skill.get('name')}\n\n{self._registry.get_skill_content(skill)}"
+            )
+        # Lazy skills: list name + description; the model fetches bodies via load_skill.
+        if lazy_skills:
             skills_prompt = "\n".join(
                 f"- **{skill.get('name')}**: {skill.get('description')}"
-                for skill in available_skills
+                for skill in lazy_skills
             )
-        else:
-            skills_prompt = "No unloaded skills remain for this run."
+            addendum_parts.append(
+                f"\n\n## Available Skills\n\n{skills_prompt}\n\n"
+                "Use the load_skill tool only when needed for missing details. "
+                "Never call load_skill twice for the same skill in the same run."
+            )
 
-        skills_addendum = (
-            f"\n\n## Available Skills\n\n{skills_prompt}\n\n"
-            "Use the load_skill tool only when needed for missing details. "
-            "Never call load_skill twice for the same skill in the same run."
-        )
-
-        new_content = list(request.system_message.content_blocks) + [
-            {"type": "text", "text": skills_addendum}
-        ]
+        new_content = list(request.system_message.content_blocks)
+        if addendum_parts:
+            new_content = new_content + [{"type": "text", "text": "".join(addendum_parts)}]
         new_system_message = SystemMessage(content=new_content)
         tools = request.tools
-        if not available_skills:
+        # Drop the load_skill tool when no lazy skills remain to fetch.
+        if not lazy_skills:
             tools = [tool for tool in request.tools if getattr(tool, "name", None) != "load_skill"]
 
         modified_request = request.override(

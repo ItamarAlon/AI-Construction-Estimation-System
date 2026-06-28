@@ -15,7 +15,7 @@ class AgentBuilder:
         self.args = args
         self.kwargs = kwargs
     
-    def skilled(self):
+    def skilled(self, eager: list[str] | None = None):
         frame = inspect.currentframe()
         try:
             caller_frame = frame.f_back
@@ -23,7 +23,8 @@ class AgentBuilder:
             skills_folder = caller_file.parent / "skills"
         finally:
             del frame
-        self.__add_middleware(SkillMiddleware(skills_folder if skills_folder.exists() else None))
+        self.__add_middleware(SkillMiddleware(
+            skills_folder if skills_folder.exists() else None, eager=eager))
         return self
     
     def limited(self, run_limit: int = 12):

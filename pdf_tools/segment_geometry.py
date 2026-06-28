@@ -32,6 +32,16 @@ _DUP_CENTER_TOL = 0.04   # max center offset as a fraction of page width/height
 _COLOCATED_TOL = 0.03   # center radius (fraction of page) for the co-location count
 
 # ---------------------------------------------------------------------------
+# True-path length: for open (non-filled, non-closed) paths, use the actual
+# drawn length instead of max(bbox) so L-shaped and diagonal walls count both
+# arms. RATIO_CAP guards against convoluted fixture paths being over-measured.
+# CLOSE_GAP: a path whose endpoint is within this many PDF units of its start
+# is treated as a closed loop and falls back to max(bbox).
+# ---------------------------------------------------------------------------
+_RATIO_CAP = 3.0
+_CLOSE_GAP = 4.0
+
+# ---------------------------------------------------------------------------
 # Per-segment image crops
 # ---------------------------------------------------------------------------
 # Master switch: when False, list_colored_segments emits ONLY the text attribute
@@ -121,7 +131,23 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
             by_key[key]["filled"] = by_key[key]["filled"] or bool(fill_match)
             by_key[key]["curved"] = by_key[key]["curved"] or has_curve
 
-    return [by_key[k] for k in order]
+    segs = [by_key[k] for k in order]
+    # Apply gated true-path length: open, non-closed-loop paths use actual
+    # path length so L-shaped walls count both arms. Filled shapes and closed
+    # loops (unfilled outlines that return to start) keep max(bbox).
+    for seg in segs:
+        if seg["filled"]:
+            continue
+        pts = seg.get("points") or []
+        if len(pts) < 3:
+            continue
+        gap = math.hypot(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1])
+        if gap < _CLOSE_GAP:
+            continue
+        poly = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
+        if poly <= seg["length_units"] * _RATIO_CAP:
+            seg["length_units"] = poly
+    return segs
 
 
 def _duplicate_canonical(segs: list[dict], page) -> list[int]:

@@ -47,6 +47,37 @@ _CROP_TARGET_PX = 768  # approximate output image size in pixels (large enough t
 _CROP_MAX_ZOOM = 12.0  # cap zoom so tiny segments don't render huge images
 
 
+def _path_points(drawing) -> list[tuple[float, float]]:
+    """Ordered (x, y) vertices tracing a drawing's path.
+
+    Used to highlight a segment along its actual route instead of around its
+    bounding box. Lines and curve endpoints become vertices; a rectangle/quad
+    expands to its corners (closed back to the start).
+    """
+    pts: list[tuple[float, float]] = []
+    for it in drawing["items"]:
+        op = it[0]
+        if op == "l":
+            a, b = it[1], it[2]
+            if not pts:
+                pts.append((a.x, a.y))
+            pts.append((b.x, b.y))
+        elif op == "c":
+            a, b = it[1], it[4]
+            if not pts:
+                pts.append((a.x, a.y))
+            pts.append((b.x, b.y))
+        elif op == "re":
+            r = it[1]
+            pts.extend([(r.x0, r.y0), (r.x1, r.y0),
+                        (r.x1, r.y1), (r.x0, r.y1), (r.x0, r.y0)])
+        elif op == "qu":
+            q = it[1]
+            pts.extend([(q.ul.x, q.ul.y), (q.ur.x, q.ur.y),
+                        (q.lr.x, q.lr.y), (q.ll.x, q.ll.y), (q.ul.x, q.ul.y)])
+    return pts
+
+
 def _collect_colored_segments(page, color: str) -> list[dict]:
     """Deterministic, ordered list of colored vector segments in the plan area.
 
@@ -83,6 +114,7 @@ def _collect_colored_segments(page, color: str) -> list[dict]:
                 "length_units": length_units,
                 "filled": bool(fill_match),
                 "curved": has_curve,
+                "points": _path_points(drawing),
             }
             order.append(key)
         else:

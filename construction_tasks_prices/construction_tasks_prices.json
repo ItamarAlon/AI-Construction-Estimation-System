@@ -5,5 +5,6 @@
   "Water Pipeline Installation (per meter)": 40,
   "Door Demolition": 400,
   "install magnetic light profile (per meter)": 100,
-  "Wall thickening (per meter)": 10.0
+  "Wall thickening (per meter)": 10.0,
+  "install LED strip lighting profile (per meter)": 200.0
 }

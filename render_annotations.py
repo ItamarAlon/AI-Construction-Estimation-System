@@ -17,6 +17,8 @@ from wall_measurement_tool import (
     cluster_group_item_rects,
 )
 
+_PATH_WIDTH = 3.0   # highlight width for per-meter path traces (thicker than the original line)
+
 
 def _is_per_meter(task_name: str) -> bool:
     """Per-meter tasks are drawn per-segment; per-unit tasks per merged item."""
@@ -47,13 +49,18 @@ def _groups_of(info: dict) -> list[dict]:
     return []  # per-unit (count) tasks have no segments to draw
 
 
-def _rects_for_group(page, group: dict) -> list:
-    """Resolve a group's IDs to fitz.Rect boxes on this page (dups collapsed)."""
+def _paths_for_group(page, group: dict) -> list:
+    """Resolve a group's IDs to path point-lists on this page (dups collapsed).
+
+    Each returned item is the ordered (x, y) vertices of one segment's drawn
+    path, so a per-meter highlight follows the actual line (including L-shaped
+    bends) instead of boxing the whole bounding rectangle.
+    """
     color = group["color"]
     ns = _namespace(color, group.get("page", 1))
     segs = _collect_colored_segments(page, color)
     canonical = _duplicate_canonical(segs, page)
-    rects, seen = [], set()
+    paths, seen = [], set()
     for token in group.get("ids", []):
         prefix, sep, idx = str(token).rpartition("-")
         if not sep or not idx.isdigit() or prefix != ns:
@@ -61,8 +68,21 @@ def _rects_for_group(page, group: dict) -> list:
         i = int(idx)
         if 0 <= i < len(segs) and canonical[i] not in seen:
             seen.add(canonical[i])
-            rects.append(segs[i]["rect"])
-    return rects
+            paths.append(segs[i].get("points") or [])
+    return paths
+
+
+def _draw_path(page, points: list, rgb: tuple) -> None:
+    """Trace a segment's path as a thick colored highlight over the original line."""
+    if len(points) < 2:
+        if points:                       # degenerate: a single vertex -> small box
+            x, y = points[0]
+            page.draw_rect(fitz.Rect(x - _BOX_PAD, y - _BOX_PAD, x + _BOX_PAD, y + _BOX_PAD),
+                           color=rgb, width=_BOX_WIDTH)
+        return
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        page.draw_line(fitz.Point(x0, y0), fitz.Point(x1, y1),
+                       color=rgb, width=_PATH_WIDTH)
 
 
 def render_annotations(pdf_path: str, classifications: dict) -> dict:
@@ -88,18 +108,20 @@ def render_annotations(pdf_path: str, classifications: dict) -> dict:
             for group in _groups_of(info):
                 if group.get("page", 1) != page_no:
                     continue
-                # Per-meter tasks: one box per segment. Per-unit tasks: one box
-                # per clustered physical item (a door's arc+header merged) so the
-                # overlay matches the counted quantity instead of showing N boxes.
+                # Per-meter tasks: trace each segment along its actual path (so an
+                # L-shaped wall is highlighted along the line, not boxed by its whole
+                # bounding rectangle). Per-unit tasks: one box per clustered physical
+                # item (a door's arc+header merged) so the overlay matches the count.
                 if _is_per_meter(task):
-                    rects = _rects_for_group(page, group)
+                    for pts in _paths_for_group(page, group):
+                        _draw_path(page, pts, rgb)
+                        drew = True
                 else:
-                    rects = cluster_group_item_rects(pdf_path, group)
-                for r in rects:
-                    box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
-                                    r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
-                    page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
-                    drew = True
+                    for r in cluster_group_item_rects(pdf_path, group):
+                        box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
+                                        r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
+                        page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
+                        drew = True
         if not drew:
             continue
         _draw_legend(page, classifications, task_color)

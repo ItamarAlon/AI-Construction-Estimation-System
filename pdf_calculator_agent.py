@@ -24,7 +24,8 @@ model = ChatOpenAI(
     model="google/gemini-3.5-flash",
     temperature=0.0,
     base_url="https://openrouter.ai/api/v1",
-    api_key=get_openrouter_api_key()
+    api_key=get_openrouter_api_key(),
+    extra_body={"reasoning": {"effort": "medium"}},
 )
 
 SYSTEM_PROMPT_SELECT_IDS = (
@@ -63,6 +64,13 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "(its full instructions are included in this prompt): map that color to the whole GROUP of "
     "tasks under the category and pick the right one for each segment. This does not apply when a "
     "color maps cleanly to a single task.\n"
+    # note: points to the eagerly-injected legend-pattern-match skill (see skill section in this prompt)
+    "   WHEN the legend instead defines tasks by a GRAPHIC PATTERN SWATCH — a small sample drawing "
+    "of a line style or symbol next to each task name (e.g. a 'מקרא תאורה' lighting legend showing a "
+    "solid line for one profile and a dot-clustered line for another, often in the SAME color) — "
+    "follow the 'legend-pattern-match' skill (its full instructions are included in this prompt): "
+    "template each swatch's pattern, tag ONLY map elements that reproduce that pattern, and NEVER tag "
+    "text, note/callout boxes, dimension lines, or leaders just because they share the swatch color.\n"
     #
     "  3. Decide which available tasks are actually present (from legend/explicit text labels/ "
     "context). Output each detected task with its EXACT name, page, and how to "
@@ -175,7 +183,7 @@ agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).pdf_reader(max_edge=3072).tool_images().skilled(eager=["legend-color-task-group"]).with_memory().build()
+).pdf_reader(max_edge=3072).tool_images().skilled(eager=["legend-color-task-group", "legend-pattern-match"]).with_memory().build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

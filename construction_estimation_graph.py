@@ -103,32 +103,82 @@ def run_enumerate(state: State) -> dict:
     return {"segment_blocks": all_blocks}
 
 
-def run_estimation(state: State) -> dict:
-    """Run the classification agent with pre-enumerated segment data.
+def _group_blocks_by_page(segment_blocks: list) -> dict:
+    """Split segment_blocks into per-page buckets keyed by page number."""
+    pages: dict[int, list] = {}
+    current_page = None
+    for block in segment_blocks:
+        if block.get("type") == "text":
+            m = re.search(r"=== Segments for .+, page (\d+) ===", block.get("text", ""))
+            if m:
+                current_page = int(m.group(1))
+        if current_page is not None:
+            pages.setdefault(current_page, []).append(block)
+    return pages
 
-    The preamble text block contains the PDF path, which the pdf_injection_middleware
-    detects and replaces with rendered page images before the first model call.
+
+def _page_fingerprint(blocks: list) -> tuple:
+    """Structural fingerprint for a page's segment blocks: (sorted colors, segment text count).
+
+    Used to skip pages that are layout-identical to an already-processed page.
     """
-    pdf_path = state["pdf_path"]
-
-    pages = state.get("pages") or []
-    pages_directive = f"[render_pages: {','.join(str(p) for p in pages)}]\n" if pages else ""
-
-    task_list = "\n".join(f"  - {t}" for t in get_available_tasks())
-    preamble = (
-        f"{pdf_path}\n{pages_directive}\n"
-        f"AVAILABLE TASKS (use exact names in your JSON output):\n{task_list}\n\n"
-        f"{state['palette']}\n\n"
-        "The segment listings for all palette colors (attributes + zoomed crops) "
-        "are provided below. Use the exact hex codes from the palette in your JSON output."
+    colors = tuple(sorted(
+        m.group(1)
+        for b in blocks if b.get("type") == "text"
+        for m in [re.search(r"=== Segments for (#[0-9a-fA-F]{6})", b.get("text", ""))]
+        if m
+    ))
+    segment_count = sum(
+        1 for b in blocks
+        if b.get("type") == "text" and not b.get("text", "").startswith("===")
     )
+    return (colors, segment_count)
 
-    content = [{"type": "text", "text": preamble}] + state["segment_blocks"]
 
-    agent_output = estimation_agent.run_blocks(content)
-    classifications = _extract_classifications(agent_output)
-    write_logs("estimation_agent_output: " + agent_output)
-    return {"estimation_agent_output": agent_output, "agent_classifications": classifications}
+def _merge_classifications(merged: dict, new: dict) -> None:
+    """Merge per-page classification dicts into a single accumulated dict."""
+    for task_name, info in new.items():
+        if task_name not in merged:
+            merged[task_name] = info
+        elif "groups" in merged[task_name] and "groups" in info:
+            merged[task_name]["groups"].extend(info["groups"])
+        elif "count" in merged[task_name] and "count" in info:
+            merged[task_name]["count"] += info["count"]
+
+
+def run_estimation(state: State) -> dict:
+    """Run the classification agent once per page with only that page's image and segments."""
+    pdf_path = state["pdf_path"]
+    task_list = "\n".join(f"  - {t}" for t in get_available_tasks())
+    pages_blocks = _group_blocks_by_page(state["segment_blocks"])
+
+    all_outputs: list[str] = []
+    merged_classifications: dict = {}
+    seen_fingerprints: set = set()
+
+    for page_num, blocks in sorted(pages_blocks.items()):
+        fp = _page_fingerprint(blocks)
+        if fp in seen_fingerprints:
+            write_logs(f"estimation page {page_num}: skipped (duplicate layout of earlier page)")
+            continue
+        seen_fingerprints.add(fp)
+        preamble = (
+            f"{pdf_path}\n[render_pages: {page_num}]\n\n"
+            f"AVAILABLE TASKS (use exact names in your JSON output):\n{task_list}\n\n"
+            f"{state['palette']}\n\n"
+            "The segment listings for all palette colors (attributes + zoomed crops) "
+            "are provided below. Use the exact hex codes from the palette in your JSON output."
+        )
+        content = [{"type": "text", "text": preamble}] + blocks
+        agent_output = estimation_agent.run_blocks(content)
+        all_outputs.append(f"=== Page {page_num} ===\n{agent_output}")
+        page_classifications = _extract_classifications(agent_output)
+        _merge_classifications(merged_classifications, page_classifications)
+        write_logs(f"estimation page {page_num}: {len(page_classifications)} task(s) found")
+
+    combined_output = "\n\n".join(all_outputs)
+    write_logs("estimation_agent_output: " + combined_output)
+    return {"estimation_agent_output": combined_output, "agent_classifications": merged_classifications}
 
 
 def _measure_group(pdf_path: str, group: dict) -> float:

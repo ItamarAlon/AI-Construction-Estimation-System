@@ -8,7 +8,7 @@ for _p in [str(_root / "helpers"), str(_root / "helpers" / "agent_wrap")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -32,6 +32,7 @@ app.add_middleware(
 
 class EstimateRequest(BaseModel):
     pdf_path: str
+    pages: list[int] | None = None   # 1-indexed pages to analyze; None/empty = all
 
 class AnnotatedPage(BaseModel):
     page: int
@@ -102,19 +103,31 @@ def _to_response(state: dict) -> EstimateResponse:
 def estimate(request: EstimateRequest):
     if not Path(request.pdf_path).exists():
         raise HTTPException(status_code=400, detail=f"File not found: {request.pdf_path}")
-    state = graph.invoke({"pdf_path": request.pdf_path})
+    state = graph.invoke({"pdf_path": request.pdf_path, "pages": request.pages or []})
     return _to_response(state)
 
 
+def _parse_pages(pages: str | None) -> list[int]:
+    """Parse a comma-separated page string like '1,3,5' into [1,3,5] (empty = all)."""
+    if not pages:
+        return []
+    out = []
+    for part in pages.split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+
 @app.post("/estimate/upload", response_model=EstimateResponse)
-async def estimate_upload(file: UploadFile = File(...)):
+async def estimate_upload(file: UploadFile = File(...), pages: str | None = Form(None)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     try:
         shutil.copyfileobj(file.file, tmp)
         tmp.close()
-        state = graph.invoke({"pdf_path": tmp.name})
+        state = graph.invoke({"pdf_path": tmp.name, "pages": _parse_pages(pages)})
         return _to_response(state)
     finally:
         Path(tmp.name).unlink(missing_ok=True)

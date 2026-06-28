@@ -31,7 +31,7 @@ def make_pdf_injection_middleware(max_edge: int | None = None):
             pdf_match = re.search(r'["\']?[\w\\/: .()-]+\.pdf["\']?', content, re.IGNORECASE)
             if not pdf_match:
                 return None
-            pdf_blocks = _pdf_to_content_blocks(pdf_match.group(), max_edge)
+            pdf_blocks = _pdf_to_content_blocks(pdf_match.group(), max_edge, _parse_render_pages(content))
             new_content = [{"type": "text", "text": content}] + pdf_blocks
             new_messages = messages[:-1] + [HumanMessage(content=new_content)]
             return {"messages": new_messages}
@@ -48,13 +48,16 @@ def make_pdf_injection_middleware(max_edge: int | None = None):
                 for b in content
             ):
                 return None
+            pages = _parse_render_pages(
+                " ".join(b.get("text", "") for b in content if b.get("type") == "text")
+            )
             for i, block in enumerate(content):
                 if block.get("type") != "text":
                     continue
                 pdf_match = re.search(r'["\']?[\w\\/: .()-]+\.pdf["\']?',
                                        block.get("text", ""), re.IGNORECASE)
                 if pdf_match:
-                    pdf_blocks = _pdf_to_content_blocks(pdf_match.group(), max_edge)
+                    pdf_blocks = _pdf_to_content_blocks(pdf_match.group(), max_edge, pages)
                     new_content = content[:i + 1] + pdf_blocks + content[i + 1:]
                     new_messages = messages[:-1] + [HumanMessage(content=new_content)]
                     return {"messages": new_messages}
@@ -69,14 +72,31 @@ def make_pdf_injection_middleware(max_edge: int | None = None):
 pdf_injection_middleware = make_pdf_injection_middleware()
 
 
-def _pdf_to_content_blocks(pdf_path: str, max_edge: int | None = None) -> list:
-    """Render every page of a PDF as image content blocks."""
+def _parse_render_pages(text: str) -> list[int] | None:
+    """Read a '[render_pages: 1,4]' directive; return the 1-indexed pages or None."""
+    m = re.search(r"\[render_pages:\s*([0-9,\s]*)\]", text or "")
+    if not m:
+        return None
+    pages = [int(p) for p in re.findall(r"\d+", m.group(1))]
+    return pages or None
+
+
+def _pdf_to_content_blocks(pdf_path: str, max_edge: int | None = None,
+                           pages: list[int] | None = None) -> list:
+    """Render PDF pages as image content blocks.
+
+    pages: 1-indexed page numbers to render (None/empty = all pages). Pages not
+    listed are skipped entirely, so the model is never billed for their images.
+    """
     path = Path(pdf_path.strip("'\""))
     if not path.exists():
         return [{"type": "text", "text": f"File not found: {pdf_path}"}]
     doc = fitz.open(str(path))
+    want = set(pages) if pages else None
     blocks = [{"type": "text", "text": f"PDF: {path.name} ({len(doc)} page(s))"}]
     for i, page in enumerate(doc, 1):
+        if want is not None and i not in want:
+            continue
         text = page.get_text().strip()
         if text:
             blocks.append({"type": "text", "text": f"Page {i} extracted text:\n{text}"})

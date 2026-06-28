@@ -63,13 +63,15 @@
 .fileItem {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.6rem;
   background: #f3f4f6;
   border-radius: 6px;
   padding: 0.45rem 0.75rem;
 }
 
 .fileName {
+  flex: 1;
+  min-width: 0;
   font-size: 0.875rem;
   color: #111827;
   white-space: nowrap;
@@ -97,6 +99,21 @@
 .removeFile:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.pagesInput {
+  flex: 0 0 auto;
+  width: 180px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  background: #fff;
+}
+
+.pagesInput:focus {
+  outline: none;
+  border-color: #6366f1;
 }
 
 .runBtn {

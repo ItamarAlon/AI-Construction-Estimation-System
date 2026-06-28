@@ -43,9 +43,12 @@ export async function updateTaskPrice(taskName, newPrice) {
   return res.json();
 }
 
-export async function estimatePdf(file) {
+export async function estimatePdf(file, pages = "") {
   const formData = new FormData();
   formData.append("file", file);
+  if (pages && pages.trim()) {
+    formData.append("pages", pages.trim());
+  }
   const res = await fetch(`${BASE_URL}/estimate/upload`, {
     method: "POST",
     body: formData,

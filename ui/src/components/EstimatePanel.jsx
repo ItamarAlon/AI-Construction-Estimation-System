@@ -10,6 +10,7 @@ export default function EstimatePanel() {
   const [results, setResults] = useState([]);
   const [running, setRunning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [pagesByFile, setPagesByFile] = useState({}); // filename -> pages string
   const inputRef = useRef(null);
 
   const addFiles = (incoming) => {
@@ -23,8 +24,17 @@ export default function EstimatePanel() {
     });
   };
 
-  const removeFile = (name) =>
+  const removeFile = (name) => {
     setFiles((prev) => prev.filter((f) => f.name !== name));
+    setPagesByFile((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
+
+  const setPagesFor = (name, value) =>
+    setPagesByFile((prev) => ({ ...prev, [name]: value }));
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -39,7 +49,7 @@ export default function EstimatePanel() {
     const out = [];
     for (const file of files) {
       try {
-        const data = await estimatePdf(file);
+        const data = await estimatePdf(file, pagesByFile[file.name] || "");
         out.push({ name: file.name, ...data, error: null });
       } catch (err) {
         out.push({ name: file.name, error: err.message });
@@ -80,6 +90,14 @@ export default function EstimatePanel() {
           {files.map((f) => (
             <li key={f.name} className={styles.fileItem}>
               <span className={styles.fileName}>{f.name}</span>
+              <input
+                type="text"
+                className={styles.pagesInput}
+                placeholder="pages (e.g. 1,3 — blank = all)"
+                value={pagesByFile[f.name] || ""}
+                onChange={(e) => setPagesFor(f.name, e.target.value)}
+                disabled={running}
+              />
               <button
                 className={styles.removeFile}
                 onClick={() => removeFile(f.name)}

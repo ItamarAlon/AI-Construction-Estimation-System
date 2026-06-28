@@ -21,6 +21,7 @@ from logs.write_logs import write_logs
 
 class State(TypedDict):
     pdf_path: str
+    pages: list                       # optional 1-indexed pages to analyze; empty/None = all
     palette: str                      # detected color palette (hex codes)
     segment_blocks: list              # pre-computed listing content blocks
     estimation_agent_output: str      # raw agent text (classification JSON + reasoning)
@@ -48,12 +49,19 @@ def run_detect_colors(state: State) -> dict:
     doc = fitz.open(pdf_path)
     n_pages = len(doc)
     doc.close()
+    selected = state.get("pages")
+    pages = [p for p in (selected or range(1, n_pages + 1)) if 1 <= p <= n_pages]
+    if not pages:
+        pages = list(range(1, n_pages + 1))
+    write_logs(f"pages: requested={selected or 'all'}, analyzing={pages}")
     sections = []
-    for p in range(1, n_pages + 1):
+    for p in pages:
         sections.append(f"--- Page {p} ---\n{format_palette(list_present_colors(pdf_path, p))}")
     palette = "\n\n".join(sections)
     write_logs("palette: " + palette)
-    return {"palette": palette}
+    # Persist the normalized page selection so later nodes (and the PDF injection
+    # middleware) only render/process those pages.
+    return {"palette": palette, "pages": pages if len(pages) < n_pages else []}
 
 
 def _parse_palette_colors(palette: str) -> list[tuple[str, int]]:
@@ -103,9 +111,12 @@ def run_estimation(state: State) -> dict:
     """
     pdf_path = state["pdf_path"]
 
+    pages = state.get("pages") or []
+    pages_directive = f"[render_pages: {','.join(str(p) for p in pages)}]\n" if pages else ""
+
     task_list = "\n".join(f"  - {t}" for t in get_available_tasks())
     preamble = (
-        f"{pdf_path}\n\n"
+        f"{pdf_path}\n{pages_directive}\n"
         f"AVAILABLE TASKS (use exact names in your JSON output):\n{task_list}\n\n"
         f"{state['palette']}\n\n"
         "The segment listings for all palette colors (attributes + zoomed crops) "

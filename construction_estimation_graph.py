@@ -1,5 +1,7 @@
 import json
 import re
+import sys
+from pathlib import Path
 import pymupdf as fitz
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
@@ -14,7 +16,7 @@ from wall_measurement_tool import (
 )
 from detect_plan_colors import list_present_colors, format_palette
 from calculate_prices import price_quantities, format_report
-from render_annotations import render_annotations
+from render_annotations import render_annotations, _paths_for_group, _groups_of, _is_per_meter
 from logs.write_logs import write_logs
 
 
@@ -216,6 +218,145 @@ def run_measure(state: State) -> dict:
     return {"measured_quantities": quantities}
 
 
+def _make_scale_check_model():
+    """Lazy-init a cheap vision model for scale calibration (OpenRouter Haiku)."""
+    _root = Path(__file__).resolve().parent
+    for _p in [str(_root / "helpers"), str(_root / "helpers" / "agent_wrap")]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+    from get_key import get_openrouter_api_key
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model="anthropic/claude-haiku-4-5",
+        temperature=0.0,
+        base_url="https://openrouter.ai/api/v1",
+        api_key=get_openrouter_api_key(),
+    )
+
+
+def _collect_segment_lengths(state: State) -> list[float]:
+    """Return sorted unique per-segment lengths (uncorrected, scale_factor=1.0)."""
+    lengths: set[float] = set()
+    pdf_path = state["pdf_path"]
+    doc = fitz.open(pdf_path)
+    for task, info in state.get("agent_classifications", {}).items():
+        if not _is_per_meter(task):
+            continue
+        for group in _groups_of(info):
+            page_no = group.get("page", 1)
+            if 1 <= page_no <= len(doc):
+                page = doc[page_no - 1]
+                for _pts, length_m, _cx, _cy in _paths_for_group(page, group, scale_factor=1.0):
+                    if length_m is not None and length_m > 0:
+                        lengths.add(length_m)
+    doc.close()
+    return sorted(lengths)
+
+
+def run_verify_scale(state: State) -> dict:
+    """Auto-detect scale error: one vision call comparing our labels to plan annotations.
+
+    Renders the plan with measurement labels at scale_factor=1.0, asks a cheap model
+    to find ONE plan dimension annotation on the same element as one of our segment
+    labels, then applies the ratio as a scale_factor correction to all per-meter tasks.
+
+    Skipped when the user has already provided a manual scale_factor override.
+    """
+    if (state.get("scale_factor") or 1.0) != 1.0:
+        write_logs("scale_verify: skipped (manual override provided)")
+        return {}
+
+    per_meter = {t: i for t, i in state.get("agent_classifications", {}).items()
+                 if _is_per_meter(t)}
+    if not per_meter:
+        return {}
+
+    segment_lengths = _collect_segment_lengths(state)
+    if not segment_lengths:
+        write_logs("scale_verify: no segment lengths available")
+        return {}
+
+    annot = render_annotations(
+        state["pdf_path"], state["agent_classifications"],
+        show_measurements=True, scale_factor=1.0,
+    )
+    if not annot.get("pages"):
+        write_logs("scale_verify: render produced no pages")
+        return {}
+    img_b64 = annot["pages"][0]["image_b64"]
+
+    model = _make_scale_check_model()
+    lengths_str = ", ".join(f"{x:.2f}m" for x in segment_lengths[:25])
+    write_logs(f"scale_verify: asking model with {len(segment_lengths)} segment lengths")
+
+    from langchain_core.messages import HumanMessage
+    response = model.invoke([HumanMessage(content=[
+        {"type": "text", "text": (
+            "This construction plan shows colored wall segments with white-background labels "
+            "(our measurements, e.g. '1.38m'). The plan also has its own black dimension "
+            "annotations with double-headed arrow lines showing declared lengths.\n\n"
+            f"Our measured segment lengths are: {lengths_str}\n\n"
+            "Find ONE white label that is on the EXACT SAME element as a black plan annotation — "
+            "meaning the same wall or structure is annotated by both.\n"
+            "Return ONLY this JSON:\n"
+            "{\"plan_cm\": <plan annotation number in cm>, "
+            "\"our_m\": <the matching value from our list above in meters>}\n"
+            "Or {\"not_found\": true} if no clear match exists.\n"
+            "Important: the plan annotation is in centimeters; pick our_m from the list above."
+        )},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+    ])])
+
+    text = response.content.strip()
+    m_json = re.search(r'\{.*\}', text, re.DOTALL)
+    if not m_json:
+        write_logs(f"scale_verify: no JSON in response: {text[:300]}")
+        return {}
+
+    try:
+        data = json.loads(m_json.group())
+    except Exception:
+        write_logs(f"scale_verify: JSON parse failed: {text[:300]}")
+        return {}
+
+    if data.get("not_found"):
+        write_logs("scale_verify: model found no matching pair")
+        return {}
+
+    plan_cm = float(data.get("plan_cm", 0))
+    our_m_raw = float(data.get("our_m", 0))
+    if plan_cm <= 0 or our_m_raw <= 0:
+        write_logs(f"scale_verify: invalid values: {data}")
+        return {}
+
+    # Snap our_m to the nearest known segment length (guards against model float drift)
+    our_m = min(segment_lengths, key=lambda x: abs(x - our_m_raw))
+    if abs(our_m - our_m_raw) > 0.05:
+        write_logs(f"scale_verify: our_m={our_m_raw} not in segment list (nearest={our_m}), ignoring")
+        return {}
+
+    ratio = (plan_cm / 100.0) / our_m
+    write_logs(f"scale_verify: plan={plan_cm}cm, ours={our_m}m, ratio={ratio:.4f}")
+
+    if not (0.7 <= ratio <= 1.5):
+        write_logs(f"scale_verify: ratio {ratio:.4f} outside plausible range 0.7–1.5, skipping")
+        return {}
+    if abs(ratio - 1.0) < 0.03:
+        write_logs(f"scale_verify: ratio {ratio:.4f} negligible (<3%), skipping")
+        return {}
+
+    # Apply correction to all per-meter quantities
+    new_quantities = {
+        task: (round(qty * ratio, 2) if _is_per_meter(task) else qty)
+        for task, qty in state["measured_quantities"].items()
+    }
+    write_logs(
+        f"scale_verify: applying correction {ratio:.4f} "
+        f"(plan={plan_cm}cm vs ours={our_m}m) to {len(per_meter)} per-meter task(s)"
+    )
+    return {"measured_quantities": new_quantities, "scale_factor": ratio}
+
+
 def run_annotate(state: State) -> dict:
     """Draw the agent's task assignments onto the plan (per-page PNGs for the UI)."""
     annotations = render_annotations(
@@ -240,13 +381,15 @@ graph = (
     .add_node("enumerate", run_enumerate)
     .add_node("estimation", run_estimation)
     .add_node("measure", run_measure)
+    .add_node("verify_scale", run_verify_scale)
     .add_node("annotate", run_annotate)
     .add_node("pricing", run_pricing)
     .add_edge(START, "detect_colors")
     .add_edge("detect_colors", "enumerate")
     .add_edge("enumerate", "estimation")
     .add_edge("estimation", "measure")
-    .add_edge("measure", "annotate")
+    .add_edge("measure", "verify_scale")
+    .add_edge("verify_scale", "annotate")
     .add_edge("annotate", "pricing")
     .add_edge("pricing", END)
     .compile()

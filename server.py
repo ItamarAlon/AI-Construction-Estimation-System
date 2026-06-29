@@ -49,6 +49,7 @@ class EstimateResponse(BaseModel):
     result: str
     annotated_pages: list[AnnotatedPage] = []
     legend: list[LegendEntry] = []
+    scale_factor: float = 1.0          # auto-detected or user-provided scale correction
 
 class AddTaskRequest(BaseModel):
     name: str
@@ -98,6 +99,7 @@ def _to_response(state: dict) -> EstimateResponse:
         result=state["result"],
         annotated_pages=annotations.get("pages", []),
         legend=annotations.get("legend", []),
+        scale_factor=state.get("scale_factor", 1.0) or 1.0,
     )
 
 

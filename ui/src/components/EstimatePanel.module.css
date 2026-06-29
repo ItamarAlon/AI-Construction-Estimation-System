@@ -176,6 +176,16 @@
   color: #6b7280;
 }
 
+.scaleNote {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #059669;
+  background: #d1fae5;
+  padding: 0.35rem 0.65rem;
+  border-radius: 5px;
+  border-left: 3px solid #059669;
+}
+
 .runBtn {
   padding: 0.65rem 1.5rem;
   background: #6366f1;

@@ -34,6 +34,7 @@ class EstimateRequest(BaseModel):
     pdf_path: str
     pages: list[int] | None = None   # 1-indexed pages to analyze; None/empty = all
     show_measurements: bool = False
+    scale_factor: float = 1.0        # multiplier for per-meter measurements (1.0 = no correction)
 
 class AnnotatedPage(BaseModel):
     page: int
@@ -108,6 +109,7 @@ def estimate(request: EstimateRequest):
         "pdf_path": request.pdf_path,
         "pages": request.pages or [],
         "show_measurements": request.show_measurements,
+        "scale_factor": request.scale_factor,
     })
     return _to_response(state)
 
@@ -129,6 +131,7 @@ async def estimate_upload(
     file: UploadFile = File(...),
     pages: str | None = Form(None),
     show_measurements: bool = Form(False),
+    scale_factor: float = Form(1.0),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -140,6 +143,7 @@ async def estimate_upload(
             "pdf_path": tmp.name,
             "pages": _parse_pages(pages),
             "show_measurements": show_measurements,
+            "scale_factor": scale_factor,
         })
         return _to_response(state)
     finally:

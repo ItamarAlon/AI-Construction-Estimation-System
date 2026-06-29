@@ -23,6 +23,7 @@ class State(TypedDict):
     pdf_path: str
     pages: list                       # optional 1-indexed pages to analyze; empty/None = all
     show_measurements: bool           # whether to draw per-segment length labels on annotations
+    scale_factor: float               # multiplier applied to all per-meter measurements (default 1.0)
     palette: str                      # detected color palette (hex codes)
     segment_blocks: list              # pre-computed listing content blocks
     estimation_agent_output: str      # raw agent text (classification JSON + reasoning)
@@ -199,12 +200,14 @@ def run_measure(state: State) -> dict:
     count them. A task given only {count: N} (no taggable symbol) passes through.
     """
     pdf_path = state["pdf_path"]
+    scale_factor = state.get("scale_factor", 1.0) or 1.0
     quantities: dict = {}
     for task_name, info in state["agent_classifications"].items():
         groups = info.get("groups") or ([info] if "ids" in info else None)
         if groups is not None:
             if task_name.strip().lower().endswith("(per meter)"):
-                quantities[task_name] = measure_task_groups(pdf_path, groups)
+                raw = measure_task_groups(pdf_path, groups)
+                quantities[task_name] = round(raw * scale_factor, 2)
             else:
                 quantities[task_name] = count_task_groups(pdf_path, groups)
         elif "count" in info:                       # per-unit item with no segments to tag
@@ -219,6 +222,7 @@ def run_annotate(state: State) -> dict:
         state["pdf_path"],
         state["agent_classifications"],
         show_measurements=state.get("show_measurements", False),
+        scale_factor=state.get("scale_factor", 1.0) or 1.0,
     )
     write_logs(f"annotations: {len(annotations['pages'])} page(s) marked; "
                f"legend={annotations['legend']}")

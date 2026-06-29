@@ -83,9 +83,32 @@ def _paths_for_group(page, group: dict) -> list[tuple]:
     return result
 
 
-def _draw_label(page, cx: float, cy: float, text: str, rgb: tuple) -> None:
-    """Draw a small measurement label at the segment's center."""
-    page.insert_text(fitz.Point(cx, cy), text, fontsize=7, color=rgb)
+_LABEL_FONTSIZE = 7
+_LABEL_PAD = 2
+
+def _draw_label(page, cx: float, cy: float, text: str) -> None:
+    """Draw a measurement label with a white background so it's visible over any segment color."""
+    tw = fitz.get_text_length(text, fontname="helv", fontsize=_LABEL_FONTSIZE)
+    # insert_text point.y is the text baseline; offset so the label is visually centered at cy
+    baseline_y = cy + _LABEL_FONTSIZE * 0.25
+    page.draw_rect(
+        fitz.Rect(
+            cx - tw / 2 - _LABEL_PAD,
+            baseline_y - _LABEL_FONTSIZE * 0.8 - _LABEL_PAD,
+            cx + tw / 2 + _LABEL_PAD,
+            baseline_y + _LABEL_FONTSIZE * 0.2 + _LABEL_PAD,
+        ),
+        color=(0.5, 0.5, 0.5),
+        fill=(1.0, 1.0, 1.0),
+        width=0.5,
+    )
+    page.insert_text(
+        fitz.Point(cx - tw / 2, baseline_y),
+        text,
+        fontname="helv",
+        fontsize=_LABEL_FONTSIZE,
+        color=(0.1, 0.1, 0.1),
+    )
 
 
 def _draw_path(page, points: list, rgb: tuple) -> None:
@@ -133,7 +156,7 @@ def render_annotations(pdf_path: str, classifications: dict,
                     for pts, length_m, cx, cy in _paths_for_group(page, group):
                         _draw_path(page, pts, rgb)
                         if show_measurements and length_m is not None:
-                            _draw_label(page, cx, cy, f"{length_m}m", rgb)
+                            _draw_label(page, cx, cy, f"{length_m}m")
                         drew = True
                 else:
                     for r in cluster_group_item_rects(pdf_path, group):

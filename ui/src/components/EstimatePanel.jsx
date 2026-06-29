@@ -11,6 +11,7 @@ export default function EstimatePanel() {
   const [running, setRunning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pagesByFile, setPagesByFile] = useState({}); // filename -> pages string
+  const [showMeasurements, setShowMeasurements] = useState(false);
   const inputRef = useRef(null);
 
   const addFiles = (incoming) => {
@@ -49,7 +50,7 @@ export default function EstimatePanel() {
     const out = [];
     for (const file of files) {
       try {
-        const data = await estimatePdf(file, pagesByFile[file.name] || "");
+        const data = await estimatePdf(file, pagesByFile[file.name] || "", showMeasurements);
         out.push({ name: file.name, ...data, error: null });
       } catch (err) {
         out.push({ name: file.name, error: err.message });
@@ -109,6 +110,16 @@ export default function EstimatePanel() {
           ))}
         </ul>
       )}
+
+      <label className={styles.checkboxRow}>
+        <input
+          type="checkbox"
+          checked={showMeasurements}
+          onChange={(e) => setShowMeasurements(e.target.checked)}
+          disabled={running}
+        />
+        Show segment lengths on plan
+      </label>
 
       <button
         className={styles.runBtn}

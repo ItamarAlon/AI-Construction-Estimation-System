@@ -33,6 +33,7 @@ app.add_middleware(
 class EstimateRequest(BaseModel):
     pdf_path: str
     pages: list[int] | None = None   # 1-indexed pages to analyze; None/empty = all
+    show_measurements: bool = False
 
 class AnnotatedPage(BaseModel):
     page: int
@@ -103,7 +104,11 @@ def _to_response(state: dict) -> EstimateResponse:
 def estimate(request: EstimateRequest):
     if not Path(request.pdf_path).exists():
         raise HTTPException(status_code=400, detail=f"File not found: {request.pdf_path}")
-    state = graph.invoke({"pdf_path": request.pdf_path, "pages": request.pages or []})
+    state = graph.invoke({
+        "pdf_path": request.pdf_path,
+        "pages": request.pages or [],
+        "show_measurements": request.show_measurements,
+    })
     return _to_response(state)
 
 
@@ -120,14 +125,22 @@ def _parse_pages(pages: str | None) -> list[int]:
 
 
 @app.post("/estimate/upload", response_model=EstimateResponse)
-async def estimate_upload(file: UploadFile = File(...), pages: str | None = Form(None)):
+async def estimate_upload(
+    file: UploadFile = File(...),
+    pages: str | None = Form(None),
+    show_measurements: bool = Form(False),
+):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     try:
         shutil.copyfileobj(file.file, tmp)
         tmp.close()
-        state = graph.invoke({"pdf_path": tmp.name, "pages": _parse_pages(pages)})
+        state = graph.invoke({
+            "pdf_path": tmp.name,
+            "pages": _parse_pages(pages),
+            "show_measurements": show_measurements,
+        })
         return _to_response(state)
     finally:
         Path(tmp.name).unlink(missing_ok=True)

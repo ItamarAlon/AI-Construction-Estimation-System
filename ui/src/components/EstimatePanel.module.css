@@ -116,6 +116,28 @@
   border-color: #6366f1;
 }
 
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkboxRow input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+.checkboxRow:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .runBtn {
   padding: 0.65rem 1.5rem;
   background: #6366f1;

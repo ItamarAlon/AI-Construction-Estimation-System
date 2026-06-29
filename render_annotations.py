@@ -14,6 +14,7 @@ from wall_measurement_tool import (
     _collect_colored_segments,
     _duplicate_canonical,
     _namespace,
+    _calibrate,
     cluster_group_item_rects,
 )
 
@@ -49,18 +50,22 @@ def _groups_of(info: dict) -> list[dict]:
     return []  # per-unit (count) tasks have no segments to draw
 
 
-def _paths_for_group(page, group: dict) -> list:
-    """Resolve a group's IDs to path point-lists on this page (dups collapsed).
+def _paths_for_group(page, group: dict) -> list[tuple]:
+    """Resolve a group's IDs to (points, length_m, cx, cy) tuples (dups collapsed).
 
-    Each returned item is the ordered (x, y) vertices of one segment's drawn
-    path, so a per-meter highlight follows the actual line (including L-shaped
-    bends) instead of boxing the whole bounding rectangle.
+    points: ordered (x, y) vertices tracing the segment's drawn path.
+    length_m: real-world length in meters (None if calibration unavailable).
+    cx, cy: center of the segment's bounding box (label anchor point).
     """
     color = group["color"]
     ns = _namespace(color, group.get("page", 1))
     segs = _collect_colored_segments(page, color)
     canonical = _duplicate_canonical(segs, page)
-    paths, seen = [], set()
+    try:
+        cm_per_unit = _calibrate(page)
+    except ValueError:
+        cm_per_unit = None
+    result, seen = [], set()
     for token in group.get("ids", []):
         prefix, sep, idx = str(token).rpartition("-")
         if not sep or not idx.isdigit() or prefix != ns:
@@ -68,8 +73,19 @@ def _paths_for_group(page, group: dict) -> list:
         i = int(idx)
         if 0 <= i < len(segs) and canonical[i] not in seen:
             seen.add(canonical[i])
-            paths.append(segs[i].get("points") or [])
-    return paths
+            r = segs[i]["rect"]
+            length_m = (round(segs[i]["length_units"] * cm_per_unit / 100, 2)
+                        if cm_per_unit is not None else None)
+            result.append((segs[i].get("points") or [],
+                           length_m,
+                           (r.x0 + r.x1) / 2,
+                           (r.y0 + r.y1) / 2))
+    return result
+
+
+def _draw_label(page, cx: float, cy: float, text: str, rgb: tuple) -> None:
+    """Draw a small measurement label at the segment's center."""
+    page.insert_text(fitz.Point(cx, cy), text, fontsize=7, color=rgb)
 
 
 def _draw_path(page, points: list, rgb: tuple) -> None:
@@ -85,7 +101,8 @@ def _draw_path(page, points: list, rgb: tuple) -> None:
                        color=rgb, width=_PATH_WIDTH)
 
 
-def render_annotations(pdf_path: str, classifications: dict) -> dict:
+def render_annotations(pdf_path: str, classifications: dict,
+                       show_measurements: bool = False) -> dict:
     """Draw per-task highlight boxes on each page. Returns {pages, legend}.
 
     pages:  [{"page": n, "image_b64": <png>}] for pages that have annotations.
@@ -113,8 +130,10 @@ def render_annotations(pdf_path: str, classifications: dict) -> dict:
                 # bounding rectangle). Per-unit tasks: one box per clustered physical
                 # item (a door's arc+header merged) so the overlay matches the count.
                 if _is_per_meter(task):
-                    for pts in _paths_for_group(page, group):
+                    for pts, length_m, cx, cy in _paths_for_group(page, group):
                         _draw_path(page, pts, rgb)
+                        if show_measurements and length_m is not None:
+                            _draw_label(page, cx, cy, f"{length_m}m", rgb)
                         drew = True
                 else:
                     for r in cluster_group_item_rects(pdf_path, group):

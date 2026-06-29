@@ -22,6 +22,7 @@ from logs.write_logs import write_logs
 class State(TypedDict):
     pdf_path: str
     pages: list                       # optional 1-indexed pages to analyze; empty/None = all
+    show_measurements: bool           # whether to draw per-segment length labels on annotations
     palette: str                      # detected color palette (hex codes)
     segment_blocks: list              # pre-computed listing content blocks
     estimation_agent_output: str      # raw agent text (classification JSON + reasoning)
@@ -214,7 +215,11 @@ def run_measure(state: State) -> dict:
 
 def run_annotate(state: State) -> dict:
     """Draw the agent's task assignments onto the plan (per-page PNGs for the UI)."""
-    annotations = render_annotations(state["pdf_path"], state["agent_classifications"])
+    annotations = render_annotations(
+        state["pdf_path"],
+        state["agent_classifications"],
+        show_measurements=state.get("show_measurements", False),
+    )
     write_logs(f"annotations: {len(annotations['pages'])} page(s) marked; "
                f"legend={annotations['legend']}")
     return {"annotations": annotations}

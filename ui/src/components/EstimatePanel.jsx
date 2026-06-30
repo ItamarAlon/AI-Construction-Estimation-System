@@ -102,6 +102,8 @@ export default function EstimatePanel() {
       setResults([...out]);
     }
     setRunning(false);
+    setFiles([]);
+    setPagesByFile({});
   };
 
   return (
@@ -171,10 +173,25 @@ export default function EstimatePanel() {
               <p className={styles.resultFile}>{r.name}</p>
               {r.error ? (
                 <p className={styles.resultError}>{r.error}</p>
+              ) : !r.line_items?.length && !r.annotated_pages?.length ? (
+                <p className={styles.resultError}>
+                  No construction tasks found. Make sure this is a construction plan PDF.
+                </p>
               ) : (
                 <>
                   {r.annotated_pages?.length > 0 && (
                     <div className={styles.annotations}>
+                      {r.page_breakdowns?.length > 1 && r.line_items?.length > 0 && (
+                        <div className={styles.pageSection}>
+                          <p className={styles.pageLabel}>Summary</p>
+                          <BreakdownTable
+                            items={r.line_items}
+                            totalLabel="Grand Total"
+                            total={r.grand_total}
+                            styles={styles}
+                          />
+                        </div>
+                      )}
                       {r.annotated_pages.map((p) => {
                         const pb = r.page_breakdowns?.find((d) => d.page === p.page);
                         return (
@@ -222,7 +239,7 @@ export default function EstimatePanel() {
                                       title={showMeasurements ? "Hide segment lengths" : "Show segment lengths"}
                                     >
                                       <span className={`${styles.legendSwatch} ${styles.measureSwatch}`} />
-                                      lengths
+                                      {showMeasurements ? "hide lengths" : "show lengths"}
                                     </span>
                                   )}
                                 </div>
@@ -263,17 +280,6 @@ export default function EstimatePanel() {
                           </div>
                         );
                       })}
-                      {r.page_breakdowns?.length > 1 && r.line_items?.length > 0 && (
-                        <div className={styles.pageSection}>
-                          <p className={styles.pageLabel}>Summary</p>
-                          <BreakdownTable
-                            items={r.line_items}
-                            totalLabel="Grand Total"
-                            total={r.grand_total}
-                            styles={styles}
-                          />
-                        </div>
-                      )}
                     </div>
                   )}
 
@@ -288,10 +294,6 @@ export default function EstimatePanel() {
                     </div>
                   )}
 
-                  <details className={styles.details}>
-                    <summary className={styles.summary}>Agent reasoning</summary>
-                    <pre className={styles.pre}>{r.agent_output}</pre>
-                  </details>
                 </>
               )}
             </div>

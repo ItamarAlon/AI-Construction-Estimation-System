@@ -446,3 +446,63 @@
 .contextMenuItem:hover {
   background: #fee2e2;
 }
+
+.progressPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.progressStep {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.stepIcon {
+  width: 16px;
+  text-align: center;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.stepLabel {
+  line-height: 1.4;
+}
+
+.stepDone {
+  color: #16a34a;
+}
+
+.stepDone .stepIcon {
+  color: #16a34a;
+  font-weight: 700;
+}
+
+.stepActive {
+  color: #111827;
+  font-weight: 600;
+}
+
+.stepPending {
+  color: #9ca3af;
+}
+
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #6366f1;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

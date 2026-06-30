@@ -67,16 +67,13 @@ export async function updateTaskPrice(taskName, newPrice) {
   return res.json();
 }
 
-export async function estimatePdf(file, pages = "", scaleFactor = 1.0) {
+export async function estimatePdf(file, pages = "", scaleFactor = 1.0, onNode = null) {
   const formData = new FormData();
   formData.append("file", file);
-  if (pages && pages.trim()) {
-    formData.append("pages", pages.trim());
-  }
-  if (scaleFactor !== 1.0) {
-    formData.append("scale_factor", String(scaleFactor));
-  }
-  const res = await fetch(`${BASE_URL}/estimate/upload`, {
+  if (pages && pages.trim()) formData.append("pages", pages.trim());
+  if (scaleFactor !== 1.0) formData.append("scale_factor", String(scaleFactor));
+
+  const res = await fetch(`${BASE_URL}/estimate/upload/stream`, {
     method: "POST",
     body: formData,
   });
@@ -84,5 +81,28 @@ export async function estimatePdf(file, pages = "", scaleFactor = 1.0) {
     const err = await res.json();
     throw new Error(err.detail || "Estimation failed");
   }
-  return res.json();
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // keep last incomplete line
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const event = JSON.parse(line.slice(6));
+      if (event.type === "node" && onNode) {
+        onNode(event.node);
+      } else if (event.type === "result") {
+        return event.data;
+      } else if (event.type === "error") {
+        throw new Error(event.message);
+      }
+    }
+  }
+  throw new Error("Stream ended without result");
 }

@@ -1,4 +1,7 @@
+import asyncio
+import json
 import tempfile
+import threading
 import shutil
 from pathlib import Path
 import sys
@@ -11,6 +14,7 @@ for _p in [str(_root / "helpers"), str(_root / "helpers" / "agent_wrap"), str(_r
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from construction_tasks_prices.read_construction_tasks_prices import (
@@ -212,3 +216,58 @@ async def estimate_upload(
         return _to_response(state)
     finally:
         Path(tmp.name).unlink(missing_ok=True)
+
+
+@app.post("/estimate/upload/stream")
+async def estimate_upload_stream(
+    file: UploadFile = File(...),
+    pages: str | None = Form(None),
+    scale_factor: float = Form(1.0),
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    shutil.copyfileobj(file.file, tmp)
+    tmp.close()
+
+    loop = asyncio.get_event_loop()
+    events_q: asyncio.Queue = asyncio.Queue()
+
+    def run_graph():
+        try:
+            input_data = {"pdf_path": tmp.name, "pages": _parse_pages(pages), "scale_factor": scale_factor}
+            accumulated = dict(input_data)
+            for update in graph.stream(input_data, stream_mode="updates"):
+                node_name = next(iter(update))
+                node_output = update[node_name]
+                if node_output:
+                    accumulated.update(node_output)
+                loop.call_soon_threadsafe(events_q.put_nowait, ("node", node_name))
+            loop.call_soon_threadsafe(events_q.put_nowait, ("done", accumulated))
+        except Exception as e:
+            loop.call_soon_threadsafe(events_q.put_nowait, ("error", str(e)))
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+
+    threading.Thread(target=run_graph, daemon=True).start()
+
+    async def event_stream():
+        while True:
+            event_type, data = await events_q.get()
+            if event_type == "node":
+                yield f"data: {json.dumps({'type': 'node', 'node': data})}\n\n"
+            elif event_type == "done":
+                response = _to_response(data)
+                # Single-line JSON — no indent to preserve SSE framing
+                yield f"data: {json.dumps({'type': 'result', 'data': response.model_dump()})}\n\n"
+                break
+            elif event_type == "error":
+                yield f"data: {json.dumps({'type': 'error', 'message': data})}\n\n"
+                break
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

@@ -42,6 +42,16 @@ function BreakdownTable({ items, totalLabel, hiddenTasks = new Set(), styles }) 
   );
 }
 
+const GRAPH_STEPS = [
+  { node: "detect_colors", label: "Detecting colors" },
+  { node: "enumerate",     label: "Enumerating segments" },
+  { node: "estimation",    label: "Classifying with AI agent" },
+  { node: "measure",       label: "Measuring quantities" },
+  { node: "verify_scale",  label: "Verifying scale" },
+  { node: "annotate",      label: "Generating annotations" },
+  { node: "pricing",       label: "Computing prices" },
+];
+
 // Change this to control how many PDFs can be queued at once
 const PDF_UPLOAD_LIMIT = 5;
 
@@ -55,6 +65,7 @@ export default function EstimatePanel() {
   const [removedTasks, setRemovedTasks] = useState(new Set());
   const [showMeasurements, setShowMeasurements] = useState(false);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, task }
+  const [completedNodes, setCompletedNodes] = useState(new Set());
   const inputRef = useRef(null);
 
   const toggleTask = useCallback((task) => {
@@ -117,18 +128,27 @@ export default function EstimatePanel() {
     setRunning(true);
     setResults([]);
     const out = [];
-    for (const file of files) {
-      try {
-        const data = await estimatePdf(file, pagesByFile[file.name] || "");
-        out.push({ name: file.name, ...data, error: null });
-      } catch (err) {
-        out.push({ name: file.name, error: err.message });
+    try {
+      for (const file of files) {
+        setCompletedNodes(new Set());
+        try {
+          const data = await estimatePdf(
+            file,
+            pagesByFile[file.name] || "",
+            1.0,
+            (node) => setCompletedNodes((prev) => new Set([...prev, node])),
+          );
+          out.push({ name: file.name, ...data, error: null });
+        } catch (err) {
+          out.push({ name: file.name, error: err.message });
+        }
+        setResults([...out]);
       }
-      setResults([...out]);
+    } finally {
+      setRunning(false);
+      setFiles([]);
+      setPagesByFile({});
     }
-    setRunning(false);
-    setFiles([]);
-    setPagesByFile({});
   };
 
   return (
@@ -190,6 +210,26 @@ export default function EstimatePanel() {
         {running ? "Running…" : "Run Estimation"}
       </button>
 
+      {running && (
+        <div className={styles.progressPanel}>
+          {GRAPH_STEPS.map(({ node, label }, i) => {
+            const done = completedNodes.has(node);
+            const active = !done && GRAPH_STEPS.slice(0, i).every((s) => completedNodes.has(s.node));
+            return (
+              <div
+                key={node}
+                className={`${styles.progressStep} ${done ? styles.stepDone : active ? styles.stepActive : styles.stepPending}`}
+              >
+                <span className={styles.stepIcon}>
+                  {done ? "✓" : active ? <span className={styles.spinner} /> : "·"}
+                </span>
+                <span className={styles.stepLabel}>{label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {results.length > 0 && (
         <div className={styles.results}>
           <h3 className={styles.resultsTitle}>Results</h3>
@@ -238,7 +278,10 @@ export default function EstimatePanel() {
                                 </div>
                               )}
                               {(() => {
-                                const pageTasks = new Set(pb?.line_items?.map((i) => i.task) ?? []);
+                                const pageTasks = new Set([
+                                  ...(pb?.line_items?.map((i) => i.task) ?? []),
+                                  ...Object.keys(p.task_layers ?? {}),
+                                ]);
                                 const pageLegend = (r.legend ?? []).filter(
                                   (e) => pageTasks.has(e.task) && !removedTasks.has(e.task)
                                 );

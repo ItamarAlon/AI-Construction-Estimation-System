@@ -1,2 +1,0 @@
-add option in skill middleware to take all skills from a specified folder (instead of the skills folder in the main path).
-Will be used for having one agent access a specific set of skills instead of all agents having access to all the skills

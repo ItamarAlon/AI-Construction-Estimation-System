@@ -19,7 +19,7 @@ from construction_tasks_prices.read_construction_tasks_prices import (
     toggle_task_type,
     get_construction_tasks_prices,
 )
-from construction_estimation_graph import graph
+from graph.construction_estimation_graph import graph
 
 app = FastAPI(title="Construction Estimation API")
 

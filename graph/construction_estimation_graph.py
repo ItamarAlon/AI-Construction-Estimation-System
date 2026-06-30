@@ -344,7 +344,7 @@ graph = (
 
 #PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\הריסה (1).pdf"
 #PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\בנייה (1).pdf"
-PDF_PATH = r"C:\Users\Alon\source\repos\Construction Estimation System\example_construction_pdfs\סט תוכניות (1).pdf"
+PDF_PATH = r"/example_construction_pdfs/סט תוכניות (1).pdf"
 
 if __name__ == "__main__":
     write_logs("-----------------------------")

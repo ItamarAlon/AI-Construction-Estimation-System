@@ -15,6 +15,11 @@ from detect_plan_colors import list_present_colors, format_palette
 from calculate_prices import price_quantities, format_report
 from render_annotations import render_annotations, _is_per_meter
 from pdf_tools.scale import compute_scale_factor
+
+# Keywords (lowercase) that identify door tasks for arc-filtering purposes.
+# Door symbols are drawn as a line (jamb) + arc (swing); only the line is the
+# real door width, so arc segments are skipped when measuring per-meter door tasks.
+_DOOR_KEYWORDS = ("door", "דלת")
 from logs.write_logs import write_logs
 
 
@@ -205,7 +210,8 @@ def run_measure(state: State) -> dict:
         groups = info.get("groups") or ([info] if "ids" in info else None)
         if groups is not None:
             if task_name.strip().lower().endswith("(per meter)"):
-                raw = measure_task_groups(pdf_path, groups)
+                is_door = any(kw in task_name.lower() for kw in _DOOR_KEYWORDS)
+                raw = measure_task_groups(pdf_path, groups, skip_curved=is_door)
                 quantities[task_name] = round(raw * scale_factor, 2)
             else:
                 quantities[task_name] = count_task_groups(pdf_path, groups)

@@ -16,12 +16,16 @@ from pdf_tools.segment_geometry import (
 )
 
 
-def _collect_group_segments(pdf_path: str, group: dict) -> list[dict]:
+def _collect_group_segments(pdf_path: str, group: dict, skip_curved: bool = False) -> list[dict]:
     """Resolve one {color, page, ids} group to a list of kept segments.
 
     Each kept segment is {length_cm, cx, cy, page} with center as a fraction
     (0-1) of the page, so segments from different pages of the same sheet are
     comparable. Within-page double-line duplicates are already collapsed here.
+
+    skip_curved: when True, arc/curve segments are excluded. Used for door
+    tasks where only the straight jamb line (the real door width) should be
+    measured, not the swing arc.
     """
     color = group["color"]
     page_number = group.get("page", 1)
@@ -58,6 +62,8 @@ def _collect_group_segments(pdf_path: str, group: dict) -> list[dict]:
     for i in indices:
         if i < 0 or i >= len(segs):
             continue
+        if skip_curved and segs[i].get("curved"):
+            continue
         rep = canonical[i]
         if rep in seen_reps:
             continue
@@ -72,7 +78,7 @@ def _collect_group_segments(pdf_path: str, group: dict) -> list[dict]:
     return kept
 
 
-def measure_task_groups(pdf_path: str, groups: list[dict]) -> float:
+def measure_task_groups(pdf_path: str, groups: list[dict], skip_curved: bool = False) -> float:
     """Total meters for a task spanning one or more {color, page, ids} groups.
 
     Segments that are geometrically identical across pages (same length and
@@ -81,7 +87,7 @@ def measure_task_groups(pdf_path: str, groups: list[dict]) -> float:
     """
     pooled: list[dict] = []
     for g in groups:
-        pooled.extend(_collect_group_segments(pdf_path, g))
+        pooled.extend(_collect_group_segments(pdf_path, g, skip_curved=skip_curved))
 
     kept: list[dict] = []
     for s in pooled:

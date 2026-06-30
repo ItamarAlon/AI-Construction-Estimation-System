@@ -50,7 +50,7 @@ def _groups_of(info: dict) -> list[dict]:
     return []  # per-unit (count) tasks have no segments to draw
 
 
-def _paths_for_group(page, group: dict, scale_factor: float = 1.0) -> list[tuple]:
+def _paths_for_group(page, group: dict, scale_factor: float = 1.0, skip_curved: bool = False) -> list[tuple]:
     """Resolve a group's IDs to (points, length_m, cx, cy) tuples (dups collapsed).
 
     points: ordered (x, y) vertices tracing the segment's drawn path.
@@ -72,6 +72,8 @@ def _paths_for_group(page, group: dict, scale_factor: float = 1.0) -> list[tuple
             continue
         i = int(idx)
         if 0 <= i < len(segs) and canonical[i] not in seen:
+            if skip_curved and segs[i].get("curved"):
+                continue
             seen.add(canonical[i])
             r = segs[i]["rect"]
             length_m = (round(segs[i]["length_units"] * cm_per_unit / 100 * scale_factor, 2)
@@ -154,7 +156,8 @@ def render_annotations(pdf_path: str, classifications: dict,
                 # bounding rectangle). Per-unit tasks: one box per clustered physical
                 # item (a door's arc+header merged) so the overlay matches the count.
                 if _is_per_meter(task):
-                    for pts, length_m, cx, cy in _paths_for_group(page, group, scale_factor):
+                    is_door = any(kw in task.lower() for kw in ("door", "דלת"))
+                    for pts, length_m, cx, cy in _paths_for_group(page, group, scale_factor, skip_curved=is_door):
                         _draw_path(page, pts, rgb)
                         if show_measurements and length_m is not None:
                             _draw_label(page, cx, cy, f"{length_m}m")

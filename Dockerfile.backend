@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# pywin32 and pywin32-ctypes are Windows-only; strip them before installing.
+# Also add pymupdf which is used but not listed in requirements.txt.
+RUN grep -vE '^pywin32' requirements.txt > /tmp/req-linux.txt \
+    && echo "pymupdf" >> /tmp/req-linux.txt \
+    && pip install --no-cache-dir -r /tmp/req-linux.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

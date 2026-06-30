@@ -231,9 +231,21 @@ def render_annotations(pdf_path: str, classifications: dict,
             seg_doc.close()
 
             if label_cmds:
+                # Deduplicate labels whose centres are within 25 PDF points of each
+                # other (the two parallel faces of the same wall both get a label at
+                # nearly the same position — keep only the first one encountered).
+                deduped: list = []
+                for cmd in label_cmds:
+                    _, cx, cy, _ = cmd
+                    if not any(
+                        abs(cx - ex) < 25 and abs(cy - ey) < 25
+                        for _, ex, ey, _ in deduped
+                    ):
+                        deduped.append(cmd)
+
                 lbl_doc = fitz.open()
                 lbl_page = lbl_doc.new_page(width=page.rect.width, height=page.rect.height)
-                for _, cx, cy, text in label_cmds:
+                for _, cx, cy, text in deduped:
                     _draw_label(lbl_page, cx, cy, text)
                 measurement_layers[task] = _render_b64_transparent(lbl_page, matrix)
                 lbl_doc.close()

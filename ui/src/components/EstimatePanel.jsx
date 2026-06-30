@@ -2,6 +2,40 @@ import { useState, useRef } from "react";
 import { estimatePdf } from "../api";
 import styles from "./EstimatePanel.module.css";
 
+function BreakdownTable({ items, totalLabel, total, styles }) {
+  const fmt = (n) => n?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (
+    <table className={styles.breakdownTable}>
+      <thead>
+        <tr>
+          <th className={styles.colTask}>Task</th>
+          <th className={styles.colNum}>Qty</th>
+          <th className={styles.colNum}>Unit ₪</th>
+          <th className={styles.colNum}>Total ₪</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item) => (
+          <tr key={item.task} className={styles.breakdownRow}>
+            <td className={styles.colTask}>{item.task.replace(/ \(per meter\)$/i, "")}</td>
+            <td className={styles.colNum}>
+              {item.task.match(/\(per meter\)$/i) ? `${item.quantity}m` : item.quantity}
+            </td>
+            <td className={styles.colNum}>{item.unit_price?.toLocaleString()}</td>
+            <td className={styles.colNum}>{fmt(item.cost)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr className={styles.totalRow}>
+          <td colSpan={3} className={styles.totalLabel}>{totalLabel}</td>
+          <td className={styles.colNum}>₪{fmt(total)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
 // Change this to control how many PDFs can be queued at once
 const PDF_UPLOAD_LIMIT = 5;
 
@@ -139,68 +173,73 @@ export default function EstimatePanel() {
                 <p className={styles.resultError}>{r.error}</p>
               ) : (
                 <>
-                  {r.line_items?.length > 0 && (
-                    <div className={styles.breakdown}>
-                      <table className={styles.breakdownTable}>
-                        <thead>
-                          <tr>
-                            <th className={styles.colTask}>Task</th>
-                            <th className={styles.colNum}>Qty</th>
-                            <th className={styles.colNum}>Unit ₪</th>
-                            <th className={styles.colNum}>Total ₪</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {r.line_items.map((item) => (
-                            <tr key={item.task} className={styles.breakdownRow}>
-                              <td className={styles.colTask}>{item.task.replace(/ \(per meter\)$/i, "")}</td>
-                              <td className={styles.colNum}>
-                                {item.task.match(/\(per meter\)$/i)
-                                  ? `${item.quantity}m`
-                                  : item.quantity}
-                              </td>
-                              <td className={styles.colNum}>{item.unit_price?.toLocaleString()}</td>
-                              <td className={styles.colNum}>{item.cost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr className={styles.totalRow}>
-                            <td colSpan={3} className={styles.totalLabel}>Grand Total</td>
-                            <td className={styles.colNum}>
-                              ₪{r.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
+                  {r.annotated_pages?.length > 0 && (
+                    <div className={styles.annotations}>
+                      {r.annotated_pages.map((p) => {
+                        const pb = r.page_breakdowns?.find((d) => d.page === p.page);
+                        return (
+                          <div key={p.page} className={styles.annotBlock}>
+                            {pb?.line_items?.length > 0 && (
+                              <div className={styles.pageSection}>
+                                {r.page_breakdowns?.length > 1 && (
+                                  <p className={styles.pageLabel}>Page {p.page}</p>
+                                )}
+                                <BreakdownTable
+                                  items={pb.line_items}
+                                  totalLabel={r.page_breakdowns?.length > 1 ? "Subtotal" : "Grand Total"}
+                                  total={pb.subtotal}
+                                  styles={styles}
+                                />
+                              </div>
+                            )}
+                            {r.legend?.length > 0 && (
+                              <div className={styles.legend}>
+                                {r.legend.map((entry) => (
+                                  <span key={entry.task} className={styles.legendItem}>
+                                    <span
+                                      className={styles.legendSwatch}
+                                      style={{ background: entry.color }}
+                                    />
+                                    {entry.task.replace(/ \(per meter\)$/i, "")}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <figure className={styles.annotPage}>
+                              <img
+                                className={styles.annotImg}
+                                src={`data:image/png;base64,${p.image_b64}`}
+                                alt={`Page ${p.page} with marked tasks`}
+                              />
+                              <figcaption className={styles.annotCaption}>
+                                Page {p.page}
+                              </figcaption>
+                            </figure>
+                          </div>
+                        );
+                      })}
+                      {r.page_breakdowns?.length > 1 && r.line_items?.length > 0 && (
+                        <div className={styles.pageSection}>
+                          <p className={styles.pageLabel}>Summary</p>
+                          <BreakdownTable
+                            items={r.line_items}
+                            totalLabel="Grand Total"
+                            total={r.grand_total}
+                            styles={styles}
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {r.annotated_pages?.length > 0 && (
-                    <div className={styles.annotations}>
-                      <div className={styles.legend}>
-                        {r.legend?.map((entry) => (
-                          <span key={entry.task} className={styles.legendItem}>
-                            <span
-                              className={styles.legendSwatch}
-                              style={{ background: entry.color }}
-                            />
-                            {entry.task.replace(/ \(per meter\)$/i, "")}
-                          </span>
-                        ))}
-                      </div>
-                      {r.annotated_pages.map((p) => (
-                        <figure key={p.page} className={styles.annotPage}>
-                          <img
-                            className={styles.annotImg}
-                            src={`data:image/png;base64,${p.image_b64}`}
-                            alt={`Page ${p.page} with marked tasks`}
-                          />
-                          <figcaption className={styles.annotCaption}>
-                            Page {p.page}
-                          </figcaption>
-                        </figure>
-                      ))}
+                  {!r.annotated_pages?.length && r.line_items?.length > 0 && (
+                    <div className={styles.breakdown}>
+                      <BreakdownTable
+                        items={r.line_items}
+                        totalLabel="Grand Total"
+                        total={r.grand_total}
+                        styles={styles}
+                      />
                     </div>
                   )}
 

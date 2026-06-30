@@ -33,9 +33,11 @@ class State(TypedDict):
     segment_blocks: list              # pre-computed listing content blocks
     estimation_agent_output: str      # raw agent text (classification JSON + reasoning)
     agent_classifications: dict       # parsed: task -> {groups:[{color,page,ids}]} or {count:N}
+    per_page_classifications: dict    # {page_num: raw_classifications} before merging
     measured_quantities: dict         # task name -> measured quantity (meters or count)
+    per_page_quantities: dict         # {page_num: {task_name: quantity}}
     annotations: dict                 # PNGs from PDFs + legend marking each task on the plan
-    calculated_prices_breakdown: dict # priced line items + grand total
+    calculated_prices_breakdown: dict # priced line items + grand total (+ per-page breakdown)
     result: str                       # human-readable cost report
 
 
@@ -161,6 +163,7 @@ def run_estimation(state: State) -> dict:
 
     all_outputs: list[str] = []
     merged_classifications: dict = {}
+    per_page_classifications: dict[int, dict] = {}
     seen_fingerprints: set = set()
 
     for page_num, blocks in sorted(pages_blocks.items()):
@@ -180,12 +183,32 @@ def run_estimation(state: State) -> dict:
         agent_output = estimation_agent.run_blocks(content)
         all_outputs.append(f"=== Page {page_num} ===\n{agent_output}")
         page_classifications = _extract_classifications(agent_output)
+        per_page_classifications[page_num] = page_classifications
         _merge_classifications(merged_classifications, page_classifications)
         write_logs(f"estimation page {page_num}: {len(page_classifications)} task(s) found")
 
     combined_output = "\n\n".join(all_outputs)
     write_logs("estimation_agent_output: " + combined_output)
-    return {"estimation_agent_output": combined_output, "agent_classifications": merged_classifications}
+    return {
+        "estimation_agent_output": combined_output,
+        "agent_classifications": merged_classifications,
+        "per_page_classifications": per_page_classifications,
+    }
+
+
+def _measure_one(pdf_path: str, task_name: str, info: dict, scale_factor: float) -> float | int | None:
+    """Measure a single task's info dict. Returns quantity or None if unmeasurable."""
+    groups = info.get("groups") or ([info] if "ids" in info else None)
+    if groups is not None:
+        if task_name.strip().lower().endswith("(per meter)"):
+            is_door = any(kw in task_name.lower() for kw in _DOOR_KEYWORDS)
+            raw = measure_task_groups(pdf_path, groups, skip_curved=is_door)
+            return round(raw * scale_factor, 2)
+        else:
+            return count_task_groups(pdf_path, groups)
+    elif "count" in info:
+        return info["count"]
+    return None
 
 
 def run_measure(state: State) -> dict:
@@ -202,23 +225,28 @@ def run_measure(state: State) -> dict:
     pdf_path = state["pdf_path"]
     scale_factor = state.get("scale_factor", 1.0) or 1.0
     known_tasks = set(get_available_tasks())
+
     quantities: dict = {}
     for task_name, info in state["agent_classifications"].items():
         if task_name not in known_tasks:
             write_logs(f"measure: dropping invented/unknown task '{task_name}'")
             continue
-        groups = info.get("groups") or ([info] if "ids" in info else None)
-        if groups is not None:
-            if task_name.strip().lower().endswith("(per meter)"):
-                is_door = any(kw in task_name.lower() for kw in _DOOR_KEYWORDS)
-                raw = measure_task_groups(pdf_path, groups, skip_curved=is_door)
-                quantities[task_name] = round(raw * scale_factor, 2)
-            else:
-                quantities[task_name] = count_task_groups(pdf_path, groups)
-        elif "count" in info:                       # per-unit item with no segments to tag
-            quantities[task_name] = info["count"]
+        qty = _measure_one(pdf_path, task_name, info, scale_factor)
+        if qty is not None:
+            quantities[task_name] = qty
+
+    per_page_quantities: dict[int, dict] = {}
+    for page_num, page_cls in state.get("per_page_classifications", {}).items():
+        for task_name, info in page_cls.items():
+            if task_name not in known_tasks:
+                continue
+            qty = _measure_one(pdf_path, task_name, info, scale_factor)
+            if qty is not None:
+                per_page_quantities.setdefault(page_num, {})[task_name] = qty
+
     write_logs("measured_quantities: " + str(quantities))
-    return {"measured_quantities": quantities}
+    write_logs("per_page_quantities: " + str(per_page_quantities))
+    return {"measured_quantities": quantities, "per_page_quantities": per_page_quantities}
 
 
 def run_verify_scale(state: State) -> dict:
@@ -253,11 +281,18 @@ def run_verify_scale(state: State) -> dict:
         task: (round(qty * scale_factor, 2) if _is_per_meter(task) else qty)
         for task, qty in state["measured_quantities"].items()
     }
+    new_per_page = {
+        page: {
+            task: (round(qty * scale_factor, 2) if _is_per_meter(task) else qty)
+            for task, qty in page_qtys.items()
+        }
+        for page, page_qtys in state.get("per_page_quantities", {}).items()
+    }
     write_logs(
         f"scale_verify: scale_factor={scale_factor:.4f}, "
         f"correcting {len(per_meter)} per-meter task(s)"
     )
-    return {"measured_quantities": new_quantities, "scale_factor": scale_factor}
+    return {"measured_quantities": new_quantities, "scale_factor": scale_factor, "per_page_quantities": new_per_page}
 
 
 def run_annotate(state: State) -> dict:
@@ -280,6 +315,10 @@ def run_annotate(state: State) -> dict:
 
 def run_pricing(state: State) -> dict:
     breakdown = price_quantities(state["measured_quantities"])
+    breakdown["pages"] = {
+        page: price_quantities(page_qtys)
+        for page, page_qtys in state.get("per_page_quantities", {}).items()
+    }
     return {"calculated_prices_breakdown": breakdown, "result": format_report(breakdown)}
 
 

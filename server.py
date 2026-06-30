@@ -51,11 +51,17 @@ class LineItem(BaseModel):
     unit_price: float | None = None
     cost: float | None = None
 
+class PageBreakdown(BaseModel):
+    page: int
+    line_items: list[LineItem]
+    subtotal: float
+
 class EstimateResponse(BaseModel):
     agent_output: str
     result: str
     line_items: list[LineItem] = []
     grand_total: float = 0.0
+    page_breakdowns: list[PageBreakdown] = []
     annotated_pages: list[AnnotatedPage] = []
     legend: list[LegendEntry] = []
     scale_factor: float = 1.0          # auto-detected or user-provided scale correction
@@ -110,24 +116,37 @@ def delete_task(task_name: str):
     return {"message": f"Task '{task_name}' removed successfully."}
 
 
-def _to_response(state: dict) -> EstimateResponse:
-    annotations = state.get("annotations") or {}
-    breakdown = state.get("calculated_prices_breakdown") or {}
-    line_items = [
+def _make_line_items(raw_items: list) -> list[LineItem]:
+    return [
         LineItem(
             task=item["task"],
             quantity=item["quantity"],
             unit_price=item.get("unit_price"),
             cost=item.get("cost"),
         )
-        for item in breakdown.get("line_items", [])
+        for item in raw_items
         if "error" not in item
+    ]
+
+
+def _to_response(state: dict) -> EstimateResponse:
+    annotations = state.get("annotations") or {}
+    breakdown = state.get("calculated_prices_breakdown") or {}
+    line_items = _make_line_items(breakdown.get("line_items", []))
+    page_breakdowns = [
+        PageBreakdown(
+            page=page,
+            line_items=_make_line_items(page_bd.get("line_items", [])),
+            subtotal=page_bd.get("grand_total", 0.0),
+        )
+        for page, page_bd in sorted(breakdown.get("pages", {}).items())
     ]
     return EstimateResponse(
         agent_output=state.get("agent_output", ""),
         result=state["result"],
         line_items=line_items,
         grand_total=breakdown.get("grand_total", 0.0),
+        page_breakdowns=page_breakdowns,
         annotated_pages=annotations.get("pages", []),
         legend=annotations.get("legend", []),
         scale_factor=state.get("scale_factor", 1.0) or 1.0,

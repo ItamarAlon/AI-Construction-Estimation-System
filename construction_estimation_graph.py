@@ -189,11 +189,19 @@ def run_measure(state: State) -> dict:
     Per-meter tasks (name ends '(per meter)') sum segment lengths. Per-unit
     tasks cluster their tagged segments into discrete items by connectivity and
     count them. A task given only {count: N} (no taggable symbol) passes through.
+
+    Tasks not in the known price list are silently dropped here — they are
+    invented task names the agent used for labeled segments that had no matching
+    existing task. Dropping them is intentional: they must not be priced.
     """
     pdf_path = state["pdf_path"]
     scale_factor = state.get("scale_factor", 1.0) or 1.0
+    known_tasks = set(get_available_tasks())
     quantities: dict = {}
     for task_name, info in state["agent_classifications"].items():
+        if task_name not in known_tasks:
+            write_logs(f"measure: dropping invented/unknown task '{task_name}'")
+            continue
         groups = info.get("groups") or ([info] if "ids" in info else None)
         if groups is not None:
             if task_name.strip().lower().endswith("(per meter)"):
@@ -248,9 +256,14 @@ def run_verify_scale(state: State) -> dict:
 
 def run_annotate(state: State) -> dict:
     """Draw the agent's task assignments onto the plan (per-page PNGs for the UI)."""
+    known_tasks = set(get_available_tasks())
+    known_classifications = {
+        t: v for t, v in state["agent_classifications"].items()
+        if t in known_tasks
+    }
     annotations = render_annotations(
         state["pdf_path"],
-        state["agent_classifications"],
+        known_classifications,
         show_measurements=state.get("show_measurements", False),
         scale_factor=state.get("scale_factor", 1.0) or 1.0,
     )

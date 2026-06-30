@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { estimatePdf } from "../api";
 import styles from "./EstimatePanel.module.css";
 
@@ -46,7 +46,17 @@ export default function EstimatePanel() {
   const [dragOver, setDragOver] = useState(false);
   const [pagesByFile, setPagesByFile] = useState({}); // filename -> pages string
   const [showMeasurements, setShowMeasurements] = useState(false);
+  const [hiddenTasks, setHiddenTasks] = useState(new Set());
   const inputRef = useRef(null);
+
+  const toggleTask = useCallback((task) => {
+    setHiddenTasks((prev) => {
+      const next = new Set(prev);
+      if (next.has(task)) next.delete(task);
+      else next.add(task);
+      return next;
+    });
+  }, []);
 
   const addFiles = (incoming) => {
     const pdfs = Array.from(incoming).filter((f) =>
@@ -197,24 +207,44 @@ export default function EstimatePanel() {
                               const pageLegend = r.legend?.filter((e) => pageTasks.has(e.task)) ?? [];
                               return pageLegend.length > 0 && (
                                 <div className={styles.legend}>
-                                  {pageLegend.map((entry) => (
-                                    <span key={entry.task} className={styles.legendItem}>
+                                  {pageLegend.map((entry) => {
+                                    const hidden = hiddenTasks.has(entry.task);
+                                    return (
                                       <span
-                                        className={styles.legendSwatch}
-                                        style={{ background: entry.color }}
-                                      />
-                                      {entry.task.replace(/ \(per meter\)$/i, "")}
-                                    </span>
-                                  ))}
+                                        key={entry.task}
+                                        className={`${styles.legendItem} ${hidden ? styles.legendItemHidden : ""}`}
+                                        onClick={() => toggleTask(entry.task)}
+                                        title={hidden ? "Click to show" : "Click to hide"}
+                                      >
+                                        <span
+                                          className={styles.legendSwatch}
+                                          style={{ background: entry.color }}
+                                        />
+                                        {entry.task.replace(/ \(per meter\)$/i, "")}
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               );
                             })()}
                             <figure className={styles.annotPage}>
-                              <img
-                                className={styles.annotImg}
-                                src={`data:image/png;base64,${p.image_b64}`}
-                                alt={`Page ${p.page} with marked tasks`}
-                              />
+                              <div className={styles.imageStack}>
+                                <img
+                                  className={styles.annotImg}
+                                  src={`data:image/png;base64,${p.base_image_b64}`}
+                                  alt={`Page ${p.page}`}
+                                />
+                                {Object.entries(p.task_layers ?? {}).map(([task, b64]) =>
+                                  !hiddenTasks.has(task) && (
+                                    <img
+                                      key={task}
+                                      className={styles.overlayImg}
+                                      src={`data:image/png;base64,${b64}`}
+                                      alt=""
+                                    />
+                                  )
+                                )}
+                              </div>
                               <figcaption className={styles.annotCaption}>
                                 Page {p.page}
                               </figcaption>

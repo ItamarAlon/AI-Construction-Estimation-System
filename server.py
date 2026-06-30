@@ -39,7 +39,8 @@ class EstimateRequest(BaseModel):
 
 class AnnotatedPage(BaseModel):
     page: int
-    image_b64: str
+    base_image_b64: str
+    task_layers: dict[str, str] = {}   # task_name -> png_b64 (white bg, multiply in UI)
 
 class LegendEntry(BaseModel):
     task: str

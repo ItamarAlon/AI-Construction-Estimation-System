@@ -5,6 +5,13 @@ Takes the per-task segment assignments the agent produced (task -> groups of
 one overlay color per task, with a legend. Returns per-page PNGs (base64) for the
 UI. Pure rendering of data we already have — the IDs resolve to the exact same
 rectangles the measurement step uses.
+
+Each page is returned as:
+  - base_image_b64: the plain PDF page with no highlights
+  - task_layers: {task_name: png_b64} — each task's highlights on a white background
+
+The UI stacks layers with mix-blend-mode: multiply, making white invisible so only
+the colored highlights bleed through. This lets users toggle tasks on/off client-side.
 """
 import base64
 
@@ -18,14 +25,7 @@ from wall_measurement_tool import (
     cluster_group_item_rects,
 )
 
-_PATH_WIDTH = 3.0   # highlight width for per-meter path traces (thicker than the original line)
-
-
-def _is_per_meter(task_name: str) -> bool:
-    """Per-meter tasks are drawn per-segment; per-unit tasks per merged item."""
-    return task_name.strip().lower().endswith("(per meter)")
-
-# Distinct, high-contrast overlay colors assigned to tasks in order (RGB 0-1).
+_PATH_WIDTH = 3.0   # highlight width for per-meter path traces
 _OVERLAY_COLORS = [
     (0.90, 0.10, 0.10),  # red
     (0.10, 0.35, 0.95),  # blue
@@ -36,27 +36,24 @@ _OVERLAY_COLORS = [
     (0.85, 0.15, 0.55),  # magenta
     (0.55, 0.35, 0.10),  # brown
 ]
-_BOX_PAD = 6        # PDF units of padding around each segment's bbox
-_BOX_WIDTH = 1.6    # outline width
-_RENDER_ZOOM = 2.0  # output resolution
+_BOX_PAD = 6
+_BOX_WIDTH = 1.6
+_RENDER_ZOOM = 2.0
+
+
+def _is_per_meter(task_name: str) -> bool:
+    return task_name.strip().lower().endswith("(per meter)")
 
 
 def _groups_of(info: dict) -> list[dict]:
-    """Normalize a task's classification value to a list of {color, page, ids}."""
     if "groups" in info:
         return info["groups"]
     if "ids" in info:
         return [info]
-    return []  # per-unit (count) tasks have no segments to draw
+    return []
 
 
 def _paths_for_group(page, group: dict, scale_factor: float = 1.0, skip_curved: bool = False) -> list[tuple]:
-    """Resolve a group's IDs to (points, length_m, cx, cy) tuples (dups collapsed).
-
-    points: ordered (x, y) vertices tracing the segment's drawn path.
-    length_m: real-world length in meters (None if calibration unavailable).
-    cx, cy: center of the segment's bounding box (label anchor point).
-    """
     color = group["color"]
     ns = _namespace(color, group.get("page", 1))
     segs = _collect_colored_segments(page, color)
@@ -88,10 +85,9 @@ def _paths_for_group(page, group: dict, scale_factor: float = 1.0, skip_curved: 
 _LABEL_FONTSIZE = 7
 _LABEL_PAD = 2
 
+
 def _draw_label(page, cx: float, cy: float, text: str) -> None:
-    """Draw a measurement label with a white background so it's visible over any segment color."""
     tw = fitz.get_text_length(text, fontname="helv", fontsize=_LABEL_FONTSIZE)
-    # insert_text point.y is the text baseline; offset so the label is visually centered at cy
     baseline_y = cy + _LABEL_FONTSIZE * 0.25
     page.draw_rect(
         fitz.Rect(
@@ -114,9 +110,8 @@ def _draw_label(page, cx: float, cy: float, text: str) -> None:
 
 
 def _draw_path(page, points: list, rgb: tuple) -> None:
-    """Trace a segment's path as a thick colored highlight over the original line."""
     if len(points) < 2:
-        if points:                       # degenerate: a single vertex -> small box
+        if points:
             x, y = points[0]
             page.draw_rect(fitz.Rect(x - _BOX_PAD, y - _BOX_PAD, x + _BOX_PAD, y + _BOX_PAD),
                            color=rgb, width=_BOX_WIDTH)
@@ -126,24 +121,35 @@ def _draw_path(page, points: list, rgb: tuple) -> None:
                        color=rgb, width=_PATH_WIDTH)
 
 
+def _render_b64(page, matrix) -> str:
+    pix = page.get_pixmap(matrix=matrix)
+    return base64.b64encode(pix.tobytes("png")).decode()
+
+
 def render_annotations(pdf_path: str, classifications: dict,
                        show_measurements: bool = False,
                        scale_factor: float = 1.0) -> dict:
-    """Draw per-task highlight boxes on each page. Returns {pages, legend}.
+    """Returns {pages, legend}.
 
-    pages:  [{"page": n, "image_b64": <png>}] for pages that have annotations.
-    legend: [{"task": name, "color": "#rrggbb"}] mapping each task to its color.
+    pages: list of {page, base_image_b64, task_layers: {task: png_b64}}
+    legend: [{task, color}]
     """
     task_color = {}
     for idx, task in enumerate(t for t in classifications if _groups_of(classifications[t])):
         task_color[task] = _OVERLAY_COLORS[idx % len(_OVERLAY_COLORS)]
 
     doc = fitz.open(pdf_path)
+    matrix = fitz.Matrix(_RENDER_ZOOM, _RENDER_ZOOM)
     pages_out = []
+
     for page_idx in range(len(doc)):
         page = doc[page_idx]
         page_no = page_idx + 1
-        tasks_on_page = set()
+
+        # Collect drawing commands per task for this page.
+        # Tuples: ("path", pts, rgb) | ("label", cx, cy, text) | ("box", rect, rgb)
+        task_cmds: dict[str, list] = {}
+
         for task, info in classifications.items():
             rgb = task_color.get(task)
             if rgb is None:
@@ -151,45 +157,54 @@ def render_annotations(pdf_path: str, classifications: dict,
             for group in _groups_of(info):
                 if group.get("page", 1) != page_no:
                     continue
-                # Per-meter tasks: trace each segment along its actual path (so an
-                # L-shaped wall is highlighted along the line, not boxed by its whole
-                # bounding rectangle). Per-unit tasks: one box per clustered physical
-                # item (a door's arc+header merged) so the overlay matches the count.
+                cmds = task_cmds.setdefault(task, [])
                 if _is_per_meter(task):
                     is_door = any(kw in task.lower() for kw in ("door", "דלת"))
                     for pts, length_m, cx, cy in _paths_for_group(page, group, scale_factor, skip_curved=is_door):
-                        _draw_path(page, pts, rgb)
+                        cmds.append(("path", pts, rgb))
                         if show_measurements and length_m is not None:
-                            _draw_label(page, cx, cy, f"{length_m}m")
-                        tasks_on_page.add(task)
+                            cmds.append(("label", cx, cy, f"{length_m}m"))
                 else:
                     for r in cluster_group_item_rects(pdf_path, group):
-                        box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
-                                        r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
-                        page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
-                        tasks_on_page.add(task)
-        if not tasks_on_page:
+                        cmds.append(("box", r, rgb))
+
+        if not task_cmds:
             continue
-        _draw_legend(page, tasks_on_page, task_color)
-        pix = page.get_pixmap(matrix=fitz.Matrix(_RENDER_ZOOM, _RENDER_ZOOM))
+
+        # Base image: plain PDF page, no annotations.
+        base_b64 = _render_b64(page, matrix)
+
+        # Per-task overlay layers on a blank white page of the same size.
+        # White background + mix-blend-mode: multiply in the UI = white is invisible.
+        task_layers = {}
+        for task, cmds in task_cmds.items():
+            tmp_doc = fitz.open()
+            tmp_page = tmp_doc.new_page(width=page.rect.width, height=page.rect.height)
+            for cmd in cmds:
+                if cmd[0] == "path":
+                    _, pts, rgb = cmd
+                    _draw_path(tmp_page, pts, rgb)
+                elif cmd[0] == "label":
+                    _, cx, cy, text = cmd
+                    _draw_label(tmp_page, cx, cy, text)
+                elif cmd[0] == "box":
+                    _, r, rgb = cmd
+                    box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
+                                    r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
+                    tmp_page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
+            task_layers[task] = _render_b64(tmp_page, matrix)
+            tmp_doc.close()
+
         pages_out.append({
             "page": page_no,
-            "image_b64": base64.b64encode(pix.tobytes("png")).decode(),
+            "base_image_b64": base_b64,
+            "task_layers": task_layers,
         })
+
     doc.close()
 
-    legend = [{"task": t, "color": "#%02x%02x%02x" % tuple(round(c * 255) for c in rgb)}
-              for t, rgb in task_color.items()]
+    legend = [
+        {"task": t, "color": "#%02x%02x%02x" % tuple(round(c * 255) for c in rgb)}
+        for t, rgb in task_color.items()
+    ]
     return {"pages": pages_out, "legend": legend}
-
-
-def _draw_legend(page, tasks_on_page: set, task_color: dict):
-    """Draw a small color/task key in the top-left corner of the page."""
-    x, y = 12, 16
-    for task, rgb in task_color.items():
-        if task not in tasks_on_page:
-            continue
-        page.draw_rect(fitz.Rect(x, y - 7, x + 10, y + 3), color=rgb, fill=rgb)
-        label = task.removesuffix(" (per meter)") if task.endswith(" (per meter)") else task
-        page.insert_text((x + 16, y + 2), label, fontsize=8, color=rgb)
-        y += 14

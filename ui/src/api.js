@@ -19,6 +19,17 @@ export async function addTask(name, price, perMeter) {
   return res.json();
 }
 
+export async function toggleTaskType(taskName) {
+  const res = await fetch(`${BASE_URL}/tasks/${encodeURIComponent(taskName)}/toggle-type`, {
+    method: "PATCH",
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to toggle task type");
+  }
+  return res.json();
+}
+
 export async function deleteTask(taskName) {
   const res = await fetch(`${BASE_URL}/tasks/${encodeURIComponent(taskName)}`, {
     method: "DELETE",

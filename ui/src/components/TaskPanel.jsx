@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { fetchTasks, addTask, deleteTask, updateTaskPrice } from "../api";
+import { fetchTasks, addTask, deleteTask, updateTaskPrice, toggleTaskType } from "../api";
 import styles from "./TaskPanel.module.css";
 
 export default function TaskPanel() {
@@ -40,6 +40,17 @@ export default function TaskPanel() {
     try {
       await deleteTask(taskName);
       if (editingTask === taskName) setEditingTask(null);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleToggleType = async (taskName) => {
+    if (editingTask === taskName) return;
+    setError("");
+    try {
+      await toggleTaskType(taskName);
       load();
     } catch (err) {
       setError(err.message);
@@ -120,22 +131,23 @@ export default function TaskPanel() {
                       </button>
                     </div>
                   ) : (
-                    <span className={styles.itemPrice}>₪{taskPrice}</span>
+                    <span
+                      className={styles.itemPrice}
+                      onClick={() => startEdit(taskName, taskPrice)}
+                      title="Click to edit price"
+                    >
+                      ₪{taskPrice}
+                    </span>
                   )}
-                  <span className={isPerMeter ? styles.badgeMeter : styles.badgeUnit}>
+                  <span
+                    className={isPerMeter ? styles.badgeMeter : styles.badgeUnit}
+                    onClick={() => handleToggleType(taskName)}
+                    title="Click to toggle per meter / per unit"
+                  >
                     {isPerMeter ? "per meter" : "per unit"}
                   </span>
                 </div>
                 <div className={styles.itemActions}>
-                  {!isEditing && (
-                    <button
-                      className={styles.editBtn}
-                      onClick={() => startEdit(taskName, taskPrice)}
-                      title="Edit price"
-                    >
-                      ✎
-                    </button>
-                  )}
                   <button
                     className={styles.deleteBtn}
                     onClick={() => handleDelete(taskName)}

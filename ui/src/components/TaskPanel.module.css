@@ -65,6 +65,15 @@
   font-size: 0.8rem;
   color: #374151;
   font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+  border-bottom: 1px dashed transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.itemPrice:hover {
+  color: #6366f1;
+  border-bottom-color: #6366f1;
 }
 
 .badgeMeter,
@@ -74,6 +83,14 @@
   border-radius: 999px;
   font-weight: 600;
   width: fit-content;
+  cursor: pointer;
+  transition: filter 0.15s;
+  user-select: none;
+}
+
+.badgeMeter:hover,
+.badgeUnit:hover {
+  filter: brightness(0.88);
 }
 
 .badgeMeter {
@@ -93,21 +110,6 @@
   flex-shrink: 0;
 }
 
-.editBtn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #9ca3af;
-  font-size: 0.95rem;
-  padding: 0.25rem 0.4rem;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
-}
-
-.editBtn:hover {
-  color: #6366f1;
-  background: #eef2ff;
-}
 
 .deleteBtn {
   background: none;

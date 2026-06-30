@@ -16,6 +16,7 @@ from construction_tasks_prices.read_construction_tasks_prices import (
     add_task,
     remove_task,
     update_task_price,
+    toggle_task_type,
     get_construction_tasks_prices,
 )
 from construction_estimation_graph import graph
@@ -81,6 +82,15 @@ def update_task(task_name: str, request: UpdateTaskRequest):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"message": f"Task '{task_name}' updated successfully."}
+
+
+@app.patch("/tasks/{task_name}/toggle-type")
+def toggle_task_type_endpoint(task_name: str):
+    try:
+        toggle_task_type(task_name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"message": f"Task '{task_name}' type toggled."}
 
 
 @app.delete("/tasks/{task_name}")

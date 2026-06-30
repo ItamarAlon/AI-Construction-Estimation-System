@@ -192,19 +192,23 @@ export default function EstimatePanel() {
                                 />
                               </div>
                             )}
-                            {r.legend?.length > 0 && (
-                              <div className={styles.legend}>
-                                {r.legend.map((entry) => (
-                                  <span key={entry.task} className={styles.legendItem}>
-                                    <span
-                                      className={styles.legendSwatch}
-                                      style={{ background: entry.color }}
-                                    />
-                                    {entry.task.replace(/ \(per meter\)$/i, "")}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            {(() => {
+                              const pageTasks = new Set(pb?.line_items?.map((i) => i.task) ?? []);
+                              const pageLegend = r.legend?.filter((e) => pageTasks.has(e.task)) ?? [];
+                              return pageLegend.length > 0 && (
+                                <div className={styles.legend}>
+                                  {pageLegend.map((entry) => (
+                                    <span key={entry.task} className={styles.legendItem}>
+                                      <span
+                                        className={styles.legendSwatch}
+                                        style={{ background: entry.color }}
+                                      />
+                                      {entry.task.replace(/ \(per meter\)$/i, "")}
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                             <figure className={styles.annotPage}>
                               <img
                                 className={styles.annotImg}

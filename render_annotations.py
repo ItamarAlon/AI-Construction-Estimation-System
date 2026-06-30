@@ -143,7 +143,7 @@ def render_annotations(pdf_path: str, classifications: dict,
     for page_idx in range(len(doc)):
         page = doc[page_idx]
         page_no = page_idx + 1
-        drew = False
+        tasks_on_page = set()
         for task, info in classifications.items():
             rgb = task_color.get(task)
             if rgb is None:
@@ -161,16 +161,16 @@ def render_annotations(pdf_path: str, classifications: dict,
                         _draw_path(page, pts, rgb)
                         if show_measurements and length_m is not None:
                             _draw_label(page, cx, cy, f"{length_m}m")
-                        drew = True
+                        tasks_on_page.add(task)
                 else:
                     for r in cluster_group_item_rects(pdf_path, group):
                         box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
                                         r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
                         page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
-                        drew = True
-        if not drew:
+                        tasks_on_page.add(task)
+        if not tasks_on_page:
             continue
-        _draw_legend(page, classifications, task_color)
+        _draw_legend(page, tasks_on_page, task_color)
         pix = page.get_pixmap(matrix=fitz.Matrix(_RENDER_ZOOM, _RENDER_ZOOM))
         pages_out.append({
             "page": page_no,
@@ -183,12 +183,11 @@ def render_annotations(pdf_path: str, classifications: dict,
     return {"pages": pages_out, "legend": legend}
 
 
-def _draw_legend(page, classifications, task_color):
+def _draw_legend(page, tasks_on_page: set, task_color: dict):
     """Draw a small color/task key in the top-left corner of the page."""
     x, y = 12, 16
-    for task, info in classifications.items():
-        rgb = task_color.get(task)
-        if rgb is None:
+    for task, rgb in task_color.items():
+        if task not in tasks_on_page:
             continue
         page.draw_rect(fitz.Rect(x, y - 7, x + 10, y + 3), color=rgb, fill=rgb)
         label = task.removesuffix(" (per meter)") if task.endswith(" (per meter)") else task

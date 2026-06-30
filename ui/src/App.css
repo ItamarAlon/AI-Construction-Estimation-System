@@ -38,3 +38,37 @@ body {
   overflow: hidden;
   background: #fff;
 }
+
+.sidebar {
+  width: 360px;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.25s ease;
+}
+
+.sidebar--collapsed {
+  width: 0;
+}
+
+.sidebarToggle {
+  flex-shrink: 0;
+  width: 16px;
+  align-self: stretch;
+  background: #f3f4f6;
+  border: none;
+  border-left: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebarToggle:hover {
+  background: #e5e7eb;
+  color: #111827;
+}

@@ -414,3 +414,30 @@
   color: #6b7280;
   text-align: center;
 }
+
+.contextMenu {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 0.25rem 0;
+  min-width: 130px;
+}
+
+.contextMenuItem {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.85rem;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 0.82rem;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.contextMenuItem:hover {
+  background: #fee2e2;
+}

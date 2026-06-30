@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { estimatePdf } from "../api";
 import styles from "./EstimatePanel.module.css";
 
@@ -46,7 +46,9 @@ export default function EstimatePanel() {
   const [dragOver, setDragOver] = useState(false);
   const [pagesByFile, setPagesByFile] = useState({}); // filename -> pages string
   const [hiddenTasks, setHiddenTasks] = useState(new Set());
+  const [removedTasks, setRemovedTasks] = useState(new Set());
   const [showMeasurements, setShowMeasurements] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, task }
   const inputRef = useRef(null);
 
   const toggleTask = useCallback((task) => {
@@ -57,6 +59,23 @@ export default function EstimatePanel() {
       return next;
     });
   }, []);
+
+  const openContextMenu = useCallback((e, task) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, task });
+  }, []);
+
+  const removeTask = useCallback((task) => {
+    setRemovedTasks((prev) => new Set([...prev, task]));
+    setContextMenu(null);
+  }, []);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const dismiss = () => setContextMenu(null);
+    document.addEventListener("mousedown", dismiss);
+    return () => document.removeEventListener("mousedown", dismiss);
+  }, [contextMenu]);
 
   const addFiles = (incoming) => {
     const pdfs = Array.from(incoming).filter((f) =>
@@ -179,125 +198,152 @@ export default function EstimatePanel() {
                 </p>
               ) : (
                 <>
-                  {r.annotated_pages?.length > 0 && (
-                    <div className={styles.annotations}>
-                      {r.page_breakdowns?.length > 1 && r.line_items?.length > 0 && (
-                        <div className={styles.pageSection}>
-                          <p className={styles.pageLabel}>Summary</p>
-                          <BreakdownTable
-                            items={r.line_items}
-                            totalLabel="Grand Total"
-                            total={r.grand_total}
-                            styles={styles}
-                          />
-                        </div>
-                      )}
-                      {r.annotated_pages.map((p) => {
-                        const pb = r.page_breakdowns?.find((d) => d.page === p.page);
-                        return (
-                          <div key={p.page} className={styles.annotBlock}>
-                            {pb?.line_items?.length > 0 && (
-                              <div className={styles.pageSection}>
-                                {r.page_breakdowns?.length > 1 && (
-                                  <p className={styles.pageLabel}>Page {p.page}</p>
-                                )}
-                                <BreakdownTable
-                                  items={pb.line_items}
-                                  totalLabel={r.page_breakdowns?.length > 1 ? "Subtotal" : "Grand Total"}
-                                  total={pb.subtotal}
-                                  styles={styles}
-                                />
-                              </div>
-                            )}
-                            {(() => {
-                              const pageTasks = new Set(pb?.line_items?.map((i) => i.task) ?? []);
-                              const pageLegend = r.legend?.filter((e) => pageTasks.has(e.task)) ?? [];
-                              const hasMeasurements = Object.keys(p.measurement_layers ?? {}).length > 0;
-                              return (pageLegend.length > 0 || hasMeasurements) && (
-                                <div className={styles.legend}>
-                                  {pageLegend.map((entry) => {
-                                    const hidden = hiddenTasks.has(entry.task);
-                                    return (
-                                      <span
-                                        key={entry.task}
-                                        className={`${styles.legendItem} ${hidden ? styles.legendItemHidden : ""}`}
-                                        onClick={() => toggleTask(entry.task)}
-                                        title={hidden ? "Click to show" : "Click to hide"}
-                                      >
+                  {r.annotated_pages?.length > 0 && (() => {
+                    const summaryItems = (r.line_items ?? []).filter((i) => !removedTasks.has(i.task));
+                    const summaryTotal = summaryItems.reduce((s, i) => s + (i.cost ?? 0), 0);
+                    return (
+                      <div className={styles.annotations}>
+                        {r.page_breakdowns?.length > 1 && summaryItems.length > 0 && (
+                          <div className={styles.pageSection}>
+                            <p className={styles.pageLabel}>Summary</p>
+                            <BreakdownTable
+                              items={summaryItems}
+                              totalLabel="Grand Total"
+                              total={summaryTotal}
+                              styles={styles}
+                            />
+                          </div>
+                        )}
+                        {r.annotated_pages.map((p) => {
+                          const pb = r.page_breakdowns?.find((d) => d.page === p.page);
+                          const pageItems = (pb?.line_items ?? []).filter((i) => !removedTasks.has(i.task));
+                          const pageTotal = pageItems.reduce((s, i) => s + (i.cost ?? 0), 0);
+                          return (
+                            <div key={p.page} className={styles.annotBlock}>
+                              {pageItems.length > 0 && (
+                                <div className={styles.pageSection}>
+                                  {r.page_breakdowns?.length > 1 && (
+                                    <p className={styles.pageLabel}>Page {p.page}</p>
+                                  )}
+                                  <BreakdownTable
+                                    items={pageItems}
+                                    totalLabel={r.page_breakdowns?.length > 1 ? "Subtotal" : "Grand Total"}
+                                    total={r.page_breakdowns?.length > 1 ? pageTotal : summaryTotal}
+                                    styles={styles}
+                                  />
+                                </div>
+                              )}
+                              {(() => {
+                                const pageTasks = new Set(pb?.line_items?.map((i) => i.task) ?? []);
+                                const pageLegend = (r.legend ?? []).filter(
+                                  (e) => pageTasks.has(e.task) && !removedTasks.has(e.task)
+                                );
+                                const hasMeasurements = Object.keys(p.measurement_layers ?? {}).some(
+                                  (t) => !removedTasks.has(t)
+                                );
+                                return (pageLegend.length > 0 || hasMeasurements) && (
+                                  <div className={styles.legend}>
+                                    {pageLegend.map((entry) => {
+                                      const hidden = hiddenTasks.has(entry.task);
+                                      return (
                                         <span
-                                          className={styles.legendSwatch}
-                                          style={{ background: entry.color }}
-                                        />
-                                        {entry.task.replace(/ \(per meter\)$/i, "")}
+                                          key={entry.task}
+                                          className={`${styles.legendItem} ${hidden ? styles.legendItemHidden : ""}`}
+                                          onClick={() => toggleTask(entry.task)}
+                                          onContextMenu={(e) => openContextMenu(e, entry.task)}
+                                          title={hidden ? "Click to show" : "Click to hide"}
+                                        >
+                                          <span
+                                            className={styles.legendSwatch}
+                                            style={{ background: entry.color }}
+                                          />
+                                          {entry.task.replace(/ \(per meter\)$/i, "")}
+                                        </span>
+                                      );
+                                    })}
+                                    {hasMeasurements && (
+                                      <span
+                                        className={`${styles.legendItem} ${styles.legendItemMeasure} ${showMeasurements ? "" : styles.legendItemHidden}`}
+                                        onClick={() => setShowMeasurements((v) => !v)}
+                                        title={showMeasurements ? "Hide segment lengths" : "Show segment lengths"}
+                                      >
+                                        <span className={`${styles.legendSwatch} ${styles.measureSwatch}`} />
+                                        {showMeasurements ? "hide lengths" : "show lengths"}
                                       </span>
-                                    );
-                                  })}
-                                  {hasMeasurements && (
-                                    <span
-                                      className={`${styles.legendItem} ${styles.legendItemMeasure} ${showMeasurements ? "" : styles.legendItemHidden}`}
-                                      onClick={() => setShowMeasurements((v) => !v)}
-                                      title={showMeasurements ? "Hide segment lengths" : "Show segment lengths"}
-                                    >
-                                      <span className={`${styles.legendSwatch} ${styles.measureSwatch}`} />
-                                      {showMeasurements ? "hide lengths" : "show lengths"}
-                                    </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                              <figure className={styles.annotPage}>
+                                <div className={styles.imageStack}>
+                                  <img
+                                    className={styles.annotImg}
+                                    src={`data:image/png;base64,${p.base_image_b64}`}
+                                    alt={`Page ${p.page}`}
+                                  />
+                                  {Object.entries(p.task_layers ?? {}).map(([task, b64]) =>
+                                    !hiddenTasks.has(task) && !removedTasks.has(task) && (
+                                      <img
+                                        key={task}
+                                        className={styles.overlayImg}
+                                        src={`data:image/png;base64,${b64}`}
+                                        alt=""
+                                      />
+                                    )
+                                  )}
+                                  {showMeasurements && Object.entries(p.measurement_layers ?? {}).map(([task, b64]) =>
+                                    !hiddenTasks.has(task) && !removedTasks.has(task) && (
+                                      <img
+                                        key={`meas-${task}`}
+                                        className={styles.measureOverlayImg}
+                                        src={`data:image/png;base64,${b64}`}
+                                        alt=""
+                                      />
+                                    )
                                   )}
                                 </div>
-                              );
-                            })()}
-                            <figure className={styles.annotPage}>
-                              <div className={styles.imageStack}>
-                                <img
-                                  className={styles.annotImg}
-                                  src={`data:image/png;base64,${p.base_image_b64}`}
-                                  alt={`Page ${p.page}`}
-                                />
-                                {Object.entries(p.task_layers ?? {}).map(([task, b64]) =>
-                                  !hiddenTasks.has(task) && (
-                                    <img
-                                      key={task}
-                                      className={styles.overlayImg}
-                                      src={`data:image/png;base64,${b64}`}
-                                      alt=""
-                                    />
-                                  )
-                                )}
-                                {showMeasurements && Object.entries(p.measurement_layers ?? {}).map(([task, b64]) =>
-                                  !hiddenTasks.has(task) && (
-                                    <img
-                                      key={`meas-${task}`}
-                                      className={styles.measureOverlayImg}
-                                      src={`data:image/png;base64,${b64}`}
-                                      alt=""
-                                    />
-                                  )
-                                )}
-                              </div>
-                              <figcaption className={styles.annotCaption}>
-                                Page {p.page}
-                              </figcaption>
-                            </figure>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                                <figcaption className={styles.annotCaption}>
+                                  Page {p.page}
+                                </figcaption>
+                              </figure>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
 
-                  {!r.annotated_pages?.length && r.line_items?.length > 0 && (
-                    <div className={styles.breakdown}>
-                      <BreakdownTable
-                        items={r.line_items}
-                        totalLabel="Grand Total"
-                        total={r.grand_total}
-                        styles={styles}
-                      />
-                    </div>
-                  )}
+                  {!r.annotated_pages?.length && r.line_items?.length > 0 && (() => {
+                    const items = (r.line_items ?? []).filter((i) => !removedTasks.has(i.task));
+                    const total = items.reduce((s, i) => s + (i.cost ?? 0), 0);
+                    return items.length > 0 && (
+                      <div className={styles.breakdown}>
+                        <BreakdownTable
+                          items={items}
+                          totalLabel="Grand Total"
+                          total={total}
+                          styles={styles}
+                        />
+                      </div>
+                    );
+                  })()}
 
                 </>
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {contextMenu && (
+        <div
+          className={styles.contextMenu}
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button className={styles.contextMenuItem} onClick={() => removeTask(contextMenu.task)}>
+            Remove task
+          </button>
         </div>
       )}
     </section>

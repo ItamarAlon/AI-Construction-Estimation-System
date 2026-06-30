@@ -59,6 +59,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: color 0.15s, border-color 0.15s;
+  width: fit-content;
+}
+
+.itemName:hover {
+  color: #6366f1;
+  border-bottom-color: #6366f1;
 }
 
 .itemPrice {
@@ -141,6 +150,15 @@
 
 .editInput {
   width: 72px;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #6366f1;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.editInputWide {
+  width: 140px;
   padding: 0.25rem 0.4rem;
   border: 1px solid #6366f1;
   border-radius: 4px;

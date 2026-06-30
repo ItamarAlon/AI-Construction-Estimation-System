@@ -127,11 +127,10 @@ def _render_b64(page, matrix) -> str:
 
 
 def render_annotations(pdf_path: str, classifications: dict,
-                       show_measurements: bool = False,
                        scale_factor: float = 1.0) -> dict:
     """Returns {pages, legend}.
 
-    pages: list of {page, base_image_b64, task_layers: {task: png_b64}}
+    pages: list of {page, base_image_b64, task_layers: {task: png_b64}, measurement_layers: {task: png_b64}}
     legend: [{task, color}]
     """
     task_color = {}
@@ -162,7 +161,7 @@ def render_annotations(pdf_path: str, classifications: dict,
                     is_door = any(kw in task.lower() for kw in ("door", "דלת"))
                     for pts, length_m, cx, cy in _paths_for_group(page, group, scale_factor, skip_curved=is_door):
                         cmds.append(("path", pts, rgb))
-                        if show_measurements and length_m is not None:
+                        if length_m is not None:
                             cmds.append(("label", cx, cy, f"{length_m}m"))
                 else:
                     for r in cluster_group_item_rects(pdf_path, group):
@@ -174,31 +173,42 @@ def render_annotations(pdf_path: str, classifications: dict,
         # Base image: plain PDF page, no annotations.
         base_b64 = _render_b64(page, matrix)
 
-        # Per-task overlay layers on a blank white page of the same size.
+        # Per-task overlay layers (paths/boxes only — no labels).
         # White background + mix-blend-mode: multiply in the UI = white is invisible.
         task_layers = {}
+        measurement_layers = {}   # task -> label-only overlay, rendered separately so they
+                                  # can be toggled independently of the segment highlights
         for task, cmds in task_cmds.items():
-            tmp_doc = fitz.open()
-            tmp_page = tmp_doc.new_page(width=page.rect.width, height=page.rect.height)
+            seg_doc = fitz.open()
+            seg_page = seg_doc.new_page(width=page.rect.width, height=page.rect.height)
+            label_cmds = []
             for cmd in cmds:
                 if cmd[0] == "path":
                     _, pts, rgb = cmd
-                    _draw_path(tmp_page, pts, rgb)
+                    _draw_path(seg_page, pts, rgb)
                 elif cmd[0] == "label":
-                    _, cx, cy, text = cmd
-                    _draw_label(tmp_page, cx, cy, text)
+                    label_cmds.append(cmd)
                 elif cmd[0] == "box":
                     _, r, rgb = cmd
                     box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
                                     r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
-                    tmp_page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
-            task_layers[task] = _render_b64(tmp_page, matrix)
-            tmp_doc.close()
+                    seg_page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
+            task_layers[task] = _render_b64(seg_page, matrix)
+            seg_doc.close()
+
+            if label_cmds:
+                lbl_doc = fitz.open()
+                lbl_page = lbl_doc.new_page(width=page.rect.width, height=page.rect.height)
+                for _, cx, cy, text in label_cmds:
+                    _draw_label(lbl_page, cx, cy, text)
+                measurement_layers[task] = _render_b64(lbl_page, matrix)
+                lbl_doc.close()
 
         pages_out.append({
             "page": page_no,
             "base_image_b64": base_b64,
             "task_layers": task_layers,
+            "measurement_layers": measurement_layers,
         })
 
     doc.close()

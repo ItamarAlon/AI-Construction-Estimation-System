@@ -45,8 +45,8 @@ export default function EstimatePanel() {
   const [running, setRunning] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pagesByFile, setPagesByFile] = useState({}); // filename -> pages string
-  const [showMeasurements, setShowMeasurements] = useState(false);
   const [hiddenTasks, setHiddenTasks] = useState(new Set());
+  const [showMeasurements, setShowMeasurements] = useState(false);
   const inputRef = useRef(null);
 
   const toggleTask = useCallback((task) => {
@@ -94,7 +94,7 @@ export default function EstimatePanel() {
     const out = [];
     for (const file of files) {
       try {
-        const data = await estimatePdf(file, pagesByFile[file.name] || "", showMeasurements);
+        const data = await estimatePdf(file, pagesByFile[file.name] || "");
         out.push({ name: file.name, ...data, error: null });
       } catch (err) {
         out.push({ name: file.name, error: err.message });
@@ -155,16 +155,6 @@ export default function EstimatePanel() {
         </ul>
       )}
 
-      <label className={styles.checkboxRow}>
-        <input
-          type="checkbox"
-          checked={showMeasurements}
-          onChange={(e) => setShowMeasurements(e.target.checked)}
-          disabled={running}
-        />
-        Show segment lengths on plan
-      </label>
-
       <button
         className={styles.runBtn}
         onClick={handleRun}
@@ -205,7 +195,8 @@ export default function EstimatePanel() {
                             {(() => {
                               const pageTasks = new Set(pb?.line_items?.map((i) => i.task) ?? []);
                               const pageLegend = r.legend?.filter((e) => pageTasks.has(e.task)) ?? [];
-                              return pageLegend.length > 0 && (
+                              const hasMeasurements = Object.keys(p.measurement_layers ?? {}).length > 0;
+                              return (pageLegend.length > 0 || hasMeasurements) && (
                                 <div className={styles.legend}>
                                   {pageLegend.map((entry) => {
                                     const hidden = hiddenTasks.has(entry.task);
@@ -224,6 +215,16 @@ export default function EstimatePanel() {
                                       </span>
                                     );
                                   })}
+                                  {hasMeasurements && (
+                                    <span
+                                      className={`${styles.legendItem} ${styles.legendItemMeasure} ${showMeasurements ? "" : styles.legendItemHidden}`}
+                                      onClick={() => setShowMeasurements((v) => !v)}
+                                      title={showMeasurements ? "Hide segment lengths" : "Show segment lengths"}
+                                    >
+                                      <span className={`${styles.legendSwatch} ${styles.measureSwatch}`} />
+                                      lengths
+                                    </span>
+                                  )}
                                 </div>
                               );
                             })()}
@@ -238,6 +239,16 @@ export default function EstimatePanel() {
                                   !hiddenTasks.has(task) && (
                                     <img
                                       key={task}
+                                      className={styles.overlayImg}
+                                      src={`data:image/png;base64,${b64}`}
+                                      alt=""
+                                    />
+                                  )
+                                )}
+                                {showMeasurements && Object.entries(p.measurement_layers ?? {}).map(([task, b64]) =>
+                                  !hiddenTasks.has(task) && (
+                                    <img
+                                      key={`meas-${task}`}
                                       className={styles.overlayImg}
                                       src={`data:image/png;base64,${b64}`}
                                       alt=""

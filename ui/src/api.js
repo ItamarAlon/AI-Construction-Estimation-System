@@ -41,6 +41,19 @@ export async function deleteTask(taskName) {
   return res.json();
 }
 
+export async function renameTask(taskName, newName) {
+  const res = await fetch(`${BASE_URL}/tasks/${encodeURIComponent(taskName)}/rename`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_name: newName }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to rename task");
+  }
+  return res.json();
+}
+
 export async function updateTaskPrice(taskName, newPrice) {
   const res = await fetch(`${BASE_URL}/tasks/${encodeURIComponent(taskName)}`, {
     method: "PUT",
@@ -54,14 +67,11 @@ export async function updateTaskPrice(taskName, newPrice) {
   return res.json();
 }
 
-export async function estimatePdf(file, pages = "", showMeasurements = false, scaleFactor = 1.0) {
+export async function estimatePdf(file, pages = "", scaleFactor = 1.0) {
   const formData = new FormData();
   formData.append("file", file);
   if (pages && pages.trim()) {
     formData.append("pages", pages.trim());
-  }
-  if (showMeasurements) {
-    formData.append("show_measurements", "true");
   }
   if (scaleFactor !== 1.0) {
     formData.append("scale_factor", String(scaleFactor));

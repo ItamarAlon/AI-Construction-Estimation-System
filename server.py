@@ -4,9 +4,10 @@ from pathlib import Path
 import sys
 
 _root = Path(__file__).resolve().parent
-for _p in [str(_root / "helpers"), str(_root / "helpers" / "agent_wrap")]:
+for _p in [str(_root / "helpers"), str(_root / "helpers" / "agent_wrap"), str(_root / "graph")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,7 @@ from construction_tasks_prices.read_construction_tasks_prices import (
     remove_task,
     update_task_price,
     toggle_task_type,
+    rename_task,
     get_construction_tasks_prices,
 )
 from graph.construction_estimation_graph import graph
@@ -34,13 +36,13 @@ app.add_middleware(
 class EstimateRequest(BaseModel):
     pdf_path: str
     pages: list[int] | None = None   # 1-indexed pages to analyze; None/empty = all
-    show_measurements: bool = False
     scale_factor: float = 1.0        # multiplier for per-meter measurements (1.0 = no correction)
 
 class AnnotatedPage(BaseModel):
     page: int
     base_image_b64: str
-    task_layers: dict[str, str] = {}   # task_name -> png_b64 (white bg, multiply in UI)
+    task_layers: dict[str, str] = {}         # task_name -> png_b64 (white bg, multiply in UI)
+    measurement_layers: dict[str, str] = {}  # task_name -> label-only png_b64, toggled in UI
 
 class LegendEntry(BaseModel):
     task: str
@@ -75,6 +77,9 @@ class AddTaskRequest(BaseModel):
 class UpdateTaskRequest(BaseModel):
     price: float
 
+class RenameTaskRequest(BaseModel):
+    new_name: str
+
 
 @app.get("/tasks")
 def get_tasks():
@@ -97,6 +102,15 @@ def update_task(task_name: str, request: UpdateTaskRequest):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"message": f"Task '{task_name}' updated successfully."}
+
+
+@app.patch("/tasks/{task_name}/rename")
+def rename_task_endpoint(task_name: str, request: RenameTaskRequest):
+    try:
+        rename_task(task_name, request.new_name)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"message": f"Task '{task_name}' renamed to '{request.new_name}'."}
 
 
 @app.patch("/tasks/{task_name}/toggle-type")
@@ -161,7 +175,6 @@ def estimate(request: EstimateRequest):
     state = graph.invoke({
         "pdf_path": request.pdf_path,
         "pages": request.pages or [],
-        "show_measurements": request.show_measurements,
         "scale_factor": request.scale_factor,
     })
     return _to_response(state)
@@ -183,7 +196,6 @@ def _parse_pages(pages: str | None) -> list[int]:
 async def estimate_upload(
     file: UploadFile = File(...),
     pages: str | None = Form(None),
-    show_measurements: bool = Form(False),
     scale_factor: float = Form(1.0),
 ):
     if not file.filename.lower().endswith(".pdf"):
@@ -195,7 +207,6 @@ async def estimate_upload(
         state = graph.invoke({
             "pdf_path": tmp.name,
             "pages": _parse_pages(pages),
-            "show_measurements": show_measurements,
             "scale_factor": scale_factor,
         })
         return _to_response(state)

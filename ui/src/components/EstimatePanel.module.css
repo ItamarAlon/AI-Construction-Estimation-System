@@ -356,6 +356,17 @@
   flex-shrink: 0;
 }
 
+.legendItemMeasure {
+  border-left: 1px solid #e5e7eb;
+  padding-left: 1rem;
+  margin-left: 0.25rem;
+}
+
+.measureSwatch {
+  background: #6b7280;
+  border-style: dashed;
+}
+
 .annotBlock {
   display: flex;
   flex-direction: column;

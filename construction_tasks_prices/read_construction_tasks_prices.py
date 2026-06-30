@@ -49,6 +49,17 @@ def toggle_task_type(name: str) -> str:
     return new_name
 
 
+def rename_task(old_name: str, new_name: str) -> None:
+    tasks = get_construction_tasks_prices()
+    if old_name not in tasks:
+        raise ValueError(f"Task '{old_name}' does not exist.")
+    if new_name in tasks:
+        raise ValueError(f"Task '{new_name}' already exists.")
+    new_tasks = {(new_name if k == old_name else k): v for k, v in tasks.items()}
+    with open(_PRICES_FILE, "w") as f:
+        json.dump(new_tasks, f, indent=2, ensure_ascii=False)
+
+
 def add_task(name: str, price: float, per_meter: bool) -> None:
     task_name = f"{name} (per meter)" if per_meter else name
     tasks = get_construction_tasks_prices()

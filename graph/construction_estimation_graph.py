@@ -27,7 +27,6 @@ from logs.write_logs import write_logs
 class State(TypedDict):
     pdf_path: str
     pages: list                       # optional 1-indexed pages to analyze; empty/None = all
-    show_measurements: bool           # whether to draw per-segment length labels on annotations
     scale_factor: float               # multiplier applied to all per-meter measurements (default 1.0)
     palette: str                      # detected color palette (hex codes)
     segment_blocks: list              # pre-computed listing content blocks
@@ -305,7 +304,6 @@ def run_annotate(state: State) -> dict:
     annotations = render_annotations(
         state["pdf_path"],
         known_classifications,
-        show_measurements=state.get("show_measurements", False),
         scale_factor=state.get("scale_factor", 1.0) or 1.0,
     )
     write_logs(f"annotations: {len(annotations['pages'])} page(s) marked; "

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { fetchTasks, addTask, deleteTask, updateTaskPrice, toggleTaskType } from "../api";
+import { fetchTasks, addTask, deleteTask, updateTaskPrice, toggleTaskType, renameTask } from "../api";
 import styles from "./TaskPanel.module.css";
 
 export default function TaskPanel() {
@@ -11,6 +11,8 @@ export default function TaskPanel() {
   const [loading, setLoading] = useState(true);
   const [editingTask, setEditingTask] = useState(null);
   const [editingPrice, setEditingPrice] = useState("");
+  const [editingNameTask, setEditingNameTask] = useState(null);
+  const [editingNameValue, setEditingNameValue] = useState("");
 
   const load = () =>
     fetchTasks()
@@ -60,6 +62,7 @@ export default function TaskPanel() {
   const startEdit = (taskName, currentPrice) => {
     setEditingTask(taskName);
     setEditingPrice(String(currentPrice));
+    setEditingNameTask(null);
     setError("");
   };
 
@@ -74,6 +77,35 @@ export default function TaskPanel() {
       await updateTaskPrice(taskName, parseFloat(editingPrice));
       setEditingTask(null);
       setEditingPrice("");
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const startEditName = (taskName) => {
+    setEditingNameTask(taskName);
+    setEditingNameValue(taskName.replace(/ \(per meter\)$/i, ""));
+    setEditingTask(null);
+    setError("");
+  };
+
+  const cancelEditName = () => {
+    setEditingNameTask(null);
+    setEditingNameValue("");
+  };
+
+  const handleSaveEditName = async (taskName) => {
+    setError("");
+    const isPerMeter = taskName.endsWith(" (per meter)");
+    const newFullName = isPerMeter
+      ? `${editingNameValue.trim()} (per meter)`
+      : editingNameValue.trim();
+    if (!newFullName.replace(/ \(per meter\)$/i, "").trim()) return;
+    try {
+      await renameTask(taskName, newFullName);
+      setEditingNameTask(null);
+      setEditingNameValue("");
       load();
     } catch (err) {
       setError(err.message);
@@ -95,10 +127,47 @@ export default function TaskPanel() {
           {entries.map(([taskName, taskPrice]) => {
             const isPerMeter = taskName.endsWith("(per meter)");
             const isEditing = editingTask === taskName;
+            const isEditingName = editingNameTask === taskName;
             return (
               <li key={taskName} className={styles.item}>
                 <div className={styles.itemInfo}>
-                  <span className={styles.itemName}>{taskName.replace(/ \(per meter\)$/i, "")}</span>
+                  {isEditingName ? (
+                    <div className={styles.editRow}>
+                      <input
+                        className={styles.editInputWide}
+                        type="text"
+                        value={editingNameValue}
+                        onChange={(e) => setEditingNameValue(e.target.value)}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveEditName(taskName);
+                          if (e.key === "Escape") cancelEditName();
+                        }}
+                      />
+                      <button
+                        className={styles.saveBtn}
+                        onClick={() => handleSaveEditName(taskName)}
+                        title="Save"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className={styles.cancelBtn}
+                        onClick={cancelEditName}
+                        title="Cancel"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <span
+                      className={styles.itemName}
+                      onClick={() => startEditName(taskName)}
+                      title="Click to edit name"
+                    >
+                      {taskName.replace(/ \(per meter\)$/i, "")}
+                    </span>
+                  )}
                   {isEditing ? (
                     <div className={styles.editRow}>
                       <span className={styles.currencySymbol}>₪</span>

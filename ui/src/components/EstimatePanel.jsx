@@ -52,6 +52,15 @@ const GRAPH_STEPS = [
   { node: "pricing",       label: "Computing prices" },
 ];
 
+const TIPS = [
+  "Click a task in the legend to hide its highlights on the plan.",
+  "Right-click a task in the legend to remove it from the results.",
+  "Toggle \"show lengths\" in the legend to reveal individual segment measurements.",
+  "Upload multiple PDFs to estimate an entire set of plans at once.",
+  "Use the pages field to run estimation on specific pages only (e.g. 1,3).",
+  "Each task layer can be toggled independently — useful for busy plans.",
+];
+
 // Change this to control how many PDFs can be queued at once
 const PDF_UPLOAD_LIMIT = 5;
 
@@ -66,7 +75,15 @@ export default function EstimatePanel() {
   const [showMeasurements, setShowMeasurements] = useState(false);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, task }
   const [completedNodes, setCompletedNodes] = useState(new Set());
+  const [tipIndex, setTipIndex] = useState(0);
   const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!running) return;
+    setTipIndex(0);
+    const id = setInterval(() => setTipIndex((i) => (i + 1) % TIPS.length), 4000);
+    return () => clearInterval(id);
+  }, [running]);
 
   const toggleTask = useCallback((task) => {
     setHiddenTasks((prev) => {
@@ -227,6 +244,10 @@ export default function EstimatePanel() {
               </div>
             );
           })}
+          <div className={styles.tipBox} key={tipIndex}>
+            <span className={styles.tipLabel}>Tip</span>
+            {TIPS[tipIndex]}
+          </div>
         </div>
       )}
 

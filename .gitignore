@@ -43,3 +43,6 @@ __pycache__/
 .env.*
 /SESSION_CONTEXT.md
 /logs/logs
+
+# Example PDFs
+/example_construction_pdfs/

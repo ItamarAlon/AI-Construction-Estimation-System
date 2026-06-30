@@ -506,3 +506,29 @@
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+.tipBox {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #1e40af;
+  line-height: 1.5;
+  animation: tipFade 0.4s ease-in;
+}
+
+.tipLabel {
+  font-weight: 700;
+  margin-right: 0.35rem;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: #3b82f6;
+}
+
+@keyframes tipFade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

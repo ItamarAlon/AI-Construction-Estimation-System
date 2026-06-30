@@ -120,7 +120,22 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "yellow layer). Only ignore segments that genuinely belong to no task.\n"
     "  - DUPLICATES: 'dup-of <id>' means a second trace of the same element. Tag those "
     "'ignore (duplicate of <id>)' to avoid double-counting.\n"
-    "  - Genuinely uncertain -> 'ignore (uncertain)'.\n\n"
+    "  - Genuinely uncertain -> 'ignore (uncertain)'.\n"
+
+    # rule: allow inventing a task name only as a last resort, using verbatim label text
+    "  - INVENTING A TASK: if a segment describes work genuinely absent from the AVAILABLE "
+    "TASKS list, you MAY tag it to an invented task — but only under strict conditions:\n"
+    "    1. SAME ELEMENT TYPE, NOT SAME ACTION: only use an existing task if it refers to "
+    "THE SAME SPECIFIC ELEMENT — not just the same kind of action. A window and a door are "
+    "DIFFERENT elements: 'Door Removal' does NOT cover a window, even though both involve "
+    "removing an opening. Invent 'window removal' (verbatim label) instead. The only case "
+    "to use an existing task is when the label is a pure wording variant of it "
+    "(e.g. 'wall destruction' → use 'Wall Demolition' if that exists for walls). "
+    "When in doubt about whether elements are the same type, invent.\n"
+    "    2. VERBATIM LABEL: when inventing, use the exact label text from the plan in the "
+    "original language. Do not translate, paraphrase, or rename it.\n"
+    "  Invented tasks are silently dropped from the final estimate and will not be priced. "
+    "Their only purpose is to avoid forcing a wrong existing-task assignment.\n\n"
 
     "--- PER-UNIT TASKS (doors, fixtures -- discrete countable items) ---\n"
     "Handle these the SAME way as per-meter tasks whenever the item is a drawn colored symbol: "
@@ -155,14 +170,13 @@ SYSTEM_PROMPT_SELECT_IDS = (
 )
 
 TOOLS_SELECT_IDS = [
-    #count_outline_shapes_by_color,
 ]
 
 agent = AgentBuilder(
     model=model,
     tools=TOOLS_SELECT_IDS,
     system_prompt=SYSTEM_PROMPT_SELECT_IDS,
-).pdf_reader(max_edge=3072).tool_images().skilled(eager=["legend-color-task-group", "legend-pattern-match"]).with_memory().build()
+).pdf_reader(max_edge=3072).tool_images().skilled(eager=["legend-color-task-group", "legend-pattern-match"]).build()
 
 PDF_PATH = r"C:\Users\Alon\source\repos\Agentic_AI_2026\final_project\files\תכנית- פירוק הריסה ובנייה (1).pdf"
 

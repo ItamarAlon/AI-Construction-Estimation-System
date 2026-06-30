@@ -18,11 +18,10 @@ def _compute_scale_geometric(page) -> float | None:
     """Return a scale correction factor for this page, or None if undeterminable.
 
     Matches every numeric text annotation to its nearest horizontal/vertical
-    dimension leader line, computes the median cm-per-unit ratio, then converts
-    to model-space using an adaptive K factor:
-      - ratio > 1.10 → annotations are already in model space (K=1.0)
-      - ratio < 0.85 → annotations are in a separate paper/annotation space (K=1.5)
-      - 0.85–1.10   → annotations match the title block; no detectable scale error
+    dimension leader line, computes the median cm-per-unit ratio, then divides
+    by the title-block cpu to get the correction factor:
+      - 0.85–1.10 → annotations match the title block; no detectable scale error
+      - outside    → return the ratio directly as the scale correction factor
     """
     title_block_cpu = _calibrate(page)
 
@@ -82,12 +81,11 @@ def _compute_scale_geometric(page) -> float | None:
         write_logs(f"scale_geometric: ratio={raw_ratio:.4f} near 1.0 — no scale error detected")
         return None
 
-    K = 1.0 if raw_ratio > 1.10 else 1.5
-    scale_factor = K * raw_ratio
+    scale_factor = raw_ratio
     write_logs(
         f"scale_geometric: title_block_cpu={title_block_cpu:.4f}, "
         f"annotation_cpu={annotation_cpu:.4f} (from {len(filtered)}/{len(ratios)} matches), "
-        f"K={K}, scale_factor={scale_factor:.4f}"
+        f"scale_factor={scale_factor:.4f}"
     )
     return scale_factor
 

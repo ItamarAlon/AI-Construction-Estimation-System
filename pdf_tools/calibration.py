@@ -14,6 +14,26 @@ _MIN_UNITS = 10
 _PLAN_WIDTH_FRACTION = 0.76
 
 
+def _find_scale_n(text: str) -> int | None:
+    """Pick the best '1:N' scale ratio from raw text.
+
+    If multiple different N values appear, use the most frequent one — the
+    primary plan scale is mentioned more often (scale bar, title block,
+    legend) than incidental detail-view scales.  Ties broken by largest N
+    so that an overall 1:500 plan wins over a 1:100 detail when both appear
+    equally often.
+    """
+    all_ns = [int(x) for x in re.findall(r"\b1:(\d+)\b", text)]
+    if not all_ns:
+        return None
+    if len(set(all_ns)) == 1:
+        return all_ns[0]
+    counts: dict[int, int] = {}
+    for n in all_ns:
+        counts[n] = counts.get(n, 0) + 1
+    return max(counts, key=lambda n: (counts[n], n))
+
+
 def _calibrate(page) -> float:
     """Derive cm_per_pdf_unit for this page.
 
@@ -23,14 +43,22 @@ def _calibrate(page) -> float:
     as real text.  1 PDF point = 1/72 inch = 2.54/72 cm; at scale 1:N
     that point represents N × 2.54/72 real-world cm.
 
+    We search the title block area first (rightmost strip, where _PLAN_WIDTH_FRACTION
+    excludes it from plan analysis) to avoid picking up detail-view annotations
+    (e.g. "1:100") that appear before the overall plan scale ("1:500") in the
+    full-page text stream.
+
     Strategy 2 — match colored paths to nearby numeric dimension
     annotations (works for PDFs that keep dimensions as text).
     """
-    # Strategy 1: parse "1:N" from anywhere on the page
-    page_text = page.get_text("text")
-    m = re.search(r"\b1:(\d+)\b", page_text)
-    if m:
-        return int(m.group(1)) * (2.54 / 72)
+    # Strategy 1: search title block area first, then full page
+    title_clip = (page.rect.width * _PLAN_WIDTH_FRACTION, 0,
+                  page.rect.width, page.rect.height)
+    n = _find_scale_n(page.get_text("text", clip=title_clip))
+    if n is None:
+        n = _find_scale_n(page.get_text("text"))
+    if n is not None:
+        return n * (2.54 / 72)
 
     # Strategy 2: annotation-matching fallback
     max_x = page.rect.width * _PLAN_WIDTH_FRACTION

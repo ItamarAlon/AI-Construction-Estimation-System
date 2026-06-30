@@ -268,7 +268,7 @@ def run_verify_scale(state: State) -> dict:
         write_logs("scale_verify: geometric calibration failed (insufficient annotations)")
         return {}
 
-    if not (0.7 <= scale_factor <= 1.5):
+    if not (0.05 <= scale_factor <= 10.0):
         write_logs(f"scale_verify: scale_factor={scale_factor:.4f} outside plausible range, skipping")
         return {}
 

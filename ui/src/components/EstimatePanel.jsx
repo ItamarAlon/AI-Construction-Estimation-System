@@ -12,7 +12,6 @@ export default function EstimatePanel() {
   const [dragOver, setDragOver] = useState(false);
   const [pagesByFile, setPagesByFile] = useState({}); // filename -> pages string
   const [showMeasurements, setShowMeasurements] = useState(false);
-  const [scaleFactor, setScaleFactor] = useState(1.0);
   const inputRef = useRef(null);
 
   const addFiles = (incoming) => {
@@ -51,7 +50,7 @@ export default function EstimatePanel() {
     const out = [];
     for (const file of files) {
       try {
-        const data = await estimatePdf(file, pagesByFile[file.name] || "", showMeasurements, scaleFactor);
+        const data = await estimatePdf(file, pagesByFile[file.name] || "", showMeasurements);
         out.push({ name: file.name, ...data, error: null });
       } catch (err) {
         out.push({ name: file.name, error: err.message });
@@ -121,28 +120,6 @@ export default function EstimatePanel() {
         />
         Show segment lengths on plan
       </label>
-
-      <div className={styles.scaleRow}>
-        <label className={styles.scaleLabel} htmlFor="scaleFactor">
-          Scale correction
-        </label>
-        <input
-          id="scaleFactor"
-          type="number"
-          className={styles.scaleInput}
-          value={scaleFactor}
-          min="0.1"
-          max="10"
-          step="0.01"
-          onChange={(e) => setScaleFactor(parseFloat(e.target.value) || 1.0)}
-          disabled={running}
-        />
-        <span className={styles.scaleHint}>
-          {scaleFactor !== 1.0
-            ? `×${scaleFactor} — measurements scaled by ${Math.round(scaleFactor * 100)}%`
-            : "1.0 = no correction"}
-        </span>
-      </div>
 
       <button
         className={styles.runBtn}

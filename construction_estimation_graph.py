@@ -1,5 +1,6 @@
 import json
 import re
+import statistics
 import sys
 from pathlib import Path
 import pymupdf as fitz
@@ -16,7 +17,7 @@ from wall_measurement_tool import (
 )
 from detect_plan_colors import list_present_colors, format_palette
 from calculate_prices import price_quantities, format_report
-from render_annotations import render_annotations, _paths_for_group, _groups_of, _is_per_meter
+from render_annotations import render_annotations, _is_per_meter
 from logs.write_logs import write_logs
 
 
@@ -218,47 +219,89 @@ def run_measure(state: State) -> dict:
     return {"measured_quantities": quantities}
 
 
-def _make_scale_check_model():
-    """Lazy-init a cheap vision model for scale calibration (OpenRouter Haiku)."""
-    _root = Path(__file__).resolve().parent
-    for _p in [str(_root / "helpers"), str(_root / "helpers" / "agent_wrap")]:
-        if _p not in sys.path:
-            sys.path.insert(0, _p)
-    from get_key import get_openrouter_api_key
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model="anthropic/claude-haiku-4-5",
-        temperature=0.0,
-        base_url="https://openrouter.ai/api/v1",
-        api_key=get_openrouter_api_key(),
-    )
+def _compute_scale_geometric(page) -> float | None:
+    """Compute scale factor by matching annotation text to dimension line lengths.
 
+    Reads all numeric text annotations, matches each to its nearest horizontal or
+    vertical dimension leader line, and computes a median cm-per-unit ratio for the
+    annotation coordinate space.  Multiplying by K=1.5 converts to the model/wall-path
+    coordinate space (ArchiCAD exports model content at 108 DPI, annotations at 72 DPI,
+    giving a 3:2 ratio).  Dividing by the title-block cpu yields the scale correction.
 
-def _collect_segment_lengths(state: State) -> list[float]:
-    """Return sorted unique per-segment lengths (uncorrected, scale_factor=1.0)."""
-    lengths: set[float] = set()
-    pdf_path = state["pdf_path"]
-    doc = fitz.open(pdf_path)
-    for task, info in state.get("agent_classifications", {}).items():
-        if not _is_per_meter(task):
+    Returns scale_factor or None when there are fewer than 3 matched annotations.
+    """
+    from pdf_tools.calibration import _calibrate
+    title_block_cpu = _calibrate(page)
+
+    annots = []
+    for w in page.get_text("words"):
+        x0, y0, x1, y1, word = w[0], w[1], w[2], w[3], w[4]
+        if not re.fullmatch(r"\d{2,4}", word):
             continue
-        for group in _groups_of(info):
-            page_no = group.get("page", 1)
-            if 1 <= page_no <= len(doc):
-                page = doc[page_no - 1]
-                for _pts, length_m, _cx, _cy in _paths_for_group(page, group, scale_factor=1.0):
-                    if length_m is not None and length_m > 0:
-                        lengths.add(length_m)
-    doc.close()
-    return sorted(lengths)
+        val = int(word)
+        if not (10 <= val <= 3000):
+            continue
+        annots.append((val, (x0 + x1) / 2, (y0 + y1) / 2))
+
+    if not annots:
+        return None
+
+    lines = []
+    for d in page.get_drawings():
+        fill = d.get("fill")
+        if fill and len(fill) >= 3:
+            r, g, b = fill[0], fill[1], fill[2]
+            if max(r, g, b) - min(r, g, b) > 0.1:  # skip chromatic fills (wall paths)
+                continue
+        for item in d.get("items", []):
+            if item[0] != "l":
+                continue
+            x1_, y1_, x2_, y2_ = item[1].x, item[1].y, item[2].x, item[2].y
+            length = ((x2_ - x1_) ** 2 + (y2_ - y1_) ** 2) ** 0.5
+            if length < 10:
+                continue
+            if abs(y2_ - y1_) < 3 or abs(x2_ - x1_) < 3:  # horizontal or vertical
+                lines.append(((x1_ + x2_) / 2, (y1_ + y2_) / 2, length))
+
+    if not lines:
+        return None
+
+    ratios = []
+    for val, cx, cy in annots:
+        nearest = min(lines, key=lambda l: (cx - l[0]) ** 2 + (cy - l[1]) ** 2)
+        dist = ((cx - nearest[0]) ** 2 + (cy - nearest[1]) ** 2) ** 0.5
+        if dist > 80:
+            continue
+        ratios.append(val / nearest[2])
+
+    if len(ratios) < 3:
+        return None
+
+    med = statistics.median(ratios)
+    filtered = [r for r in ratios if 0.8 * med <= r <= 1.2 * med]
+    if len(filtered) < 3:
+        return None
+
+    annotation_cpu = statistics.median(filtered)
+    # If annotation lines are already in model space (annotation_cpu > title_block_cpu),
+    # no DPI conversion needed (K=1.0). If they're in a smaller annotation space
+    # (annotation_cpu < title_block_cpu), multiply by 1.5 to reach model space (K=1.5).
+    K = 1.0 if annotation_cpu > title_block_cpu else 1.5
+    scale_factor = (K * annotation_cpu) / title_block_cpu
+    write_logs(
+        f"scale_geometric: title_block_cpu={title_block_cpu:.4f}, "
+        f"annotation_cpu={annotation_cpu:.4f} (from {len(filtered)}/{len(ratios)} matches), "
+        f"K={K}, scale_factor={scale_factor:.4f}"
+    )
+    return scale_factor
 
 
 def run_verify_scale(state: State) -> dict:
-    """Auto-detect scale error: one vision call comparing our labels to plan annotations.
+    """Auto-detect PDF scale error using geometric calibration (no vision model needed).
 
-    Renders the plan with measurement labels at scale_factor=1.0, asks a cheap model
-    to find ONE plan dimension annotation on the same element as one of our segment
-    labels, then applies the ratio as a scale_factor correction to all per-meter tasks.
+    Matches numeric dimension annotations to their leader lines, computes a median
+    annotation cm-per-unit, applies the ArchiCAD model/annotation ratio (K=1.5), and
+    derives a scale_factor correction for all per-meter tasks.
 
     Skipped when the user has already provided a manual scale_factor override.
     """
@@ -271,90 +314,32 @@ def run_verify_scale(state: State) -> dict:
     if not per_meter:
         return {}
 
-    segment_lengths = _collect_segment_lengths(state)
-    if not segment_lengths:
-        write_logs("scale_verify: no segment lengths available")
+    doc = fitz.open(state["pdf_path"])
+    page = doc[0]
+    scale_factor = _compute_scale_geometric(page)
+    doc.close()
+
+    if scale_factor is None:
+        write_logs("scale_verify: geometric calibration failed (insufficient annotations)")
         return {}
 
-    annot = render_annotations(
-        state["pdf_path"], state["agent_classifications"],
-        show_measurements=True, scale_factor=1.0,
-    )
-    if not annot.get("pages"):
-        write_logs("scale_verify: render produced no pages")
-        return {}
-    img_b64 = annot["pages"][0]["image_b64"]
-
-    model = _make_scale_check_model()
-    lengths_str = ", ".join(f"{x:.2f}m" for x in segment_lengths[:25])
-    write_logs(f"scale_verify: asking model with {len(segment_lengths)} segment lengths")
-
-    from langchain_core.messages import HumanMessage
-    response = model.invoke([HumanMessage(content=[
-        {"type": "text", "text": (
-            "This construction plan shows colored wall segments with white-background labels "
-            "(our measurements, e.g. '1.38m'). The plan also has its own black dimension "
-            "annotations with double-headed arrow lines showing declared lengths.\n\n"
-            f"Our measured segment lengths are: {lengths_str}\n\n"
-            "Find ONE white label that is on the EXACT SAME element as a black plan annotation — "
-            "meaning the same wall or structure is annotated by both.\n"
-            "Return ONLY this JSON:\n"
-            "{\"plan_cm\": <plan annotation number in cm>, "
-            "\"our_m\": <the matching value from our list above in meters>}\n"
-            "Or {\"not_found\": true} if no clear match exists.\n"
-            "Important: the plan annotation is in centimeters; pick our_m from the list above."
-        )},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-    ])])
-
-    text = response.content.strip()
-    m_json = re.search(r'\{.*\}', text, re.DOTALL)
-    if not m_json:
-        write_logs(f"scale_verify: no JSON in response: {text[:300]}")
+    if not (0.7 <= scale_factor <= 1.5):
+        write_logs(f"scale_verify: scale_factor={scale_factor:.4f} outside plausible range, skipping")
         return {}
 
-    try:
-        data = json.loads(m_json.group())
-    except Exception:
-        write_logs(f"scale_verify: JSON parse failed: {text[:300]}")
+    if abs(scale_factor - 1.0) < 0.03:
+        write_logs(f"scale_verify: scale_factor={scale_factor:.4f} negligible (<3%), skipping")
         return {}
 
-    if data.get("not_found"):
-        write_logs("scale_verify: model found no matching pair")
-        return {}
-
-    plan_cm = float(data.get("plan_cm", 0))
-    our_m_raw = float(data.get("our_m", 0))
-    if plan_cm <= 0 or our_m_raw <= 0:
-        write_logs(f"scale_verify: invalid values: {data}")
-        return {}
-
-    # Snap our_m to the nearest known segment length (guards against model float drift)
-    our_m = min(segment_lengths, key=lambda x: abs(x - our_m_raw))
-    if abs(our_m - our_m_raw) > 0.05:
-        write_logs(f"scale_verify: our_m={our_m_raw} not in segment list (nearest={our_m}), ignoring")
-        return {}
-
-    ratio = (plan_cm / 100.0) / our_m
-    write_logs(f"scale_verify: plan={plan_cm}cm, ours={our_m}m, ratio={ratio:.4f}")
-
-    if not (0.7 <= ratio <= 1.5):
-        write_logs(f"scale_verify: ratio {ratio:.4f} outside plausible range 0.7–1.5, skipping")
-        return {}
-    if abs(ratio - 1.0) < 0.03:
-        write_logs(f"scale_verify: ratio {ratio:.4f} negligible (<3%), skipping")
-        return {}
-
-    # Apply correction to all per-meter quantities
     new_quantities = {
-        task: (round(qty * ratio, 2) if _is_per_meter(task) else qty)
+        task: (round(qty * scale_factor, 2) if _is_per_meter(task) else qty)
         for task, qty in state["measured_quantities"].items()
     }
     write_logs(
-        f"scale_verify: applying correction {ratio:.4f} "
-        f"(plan={plan_cm}cm vs ours={our_m}m) to {len(per_meter)} per-meter task(s)"
+        f"scale_verify: geometric calibration → scale_factor={scale_factor:.4f}, "
+        f"correcting {len(per_meter)} per-meter task(s)"
     )
-    return {"measured_quantities": new_quantities, "scale_factor": ratio}
+    return {"measured_quantities": new_quantities, "scale_factor": scale_factor}
 
 
 def run_annotate(state: State) -> dict:

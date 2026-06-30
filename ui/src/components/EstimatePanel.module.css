@@ -138,43 +138,6 @@
   cursor: not-allowed;
 }
 
-.scaleRow {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.scaleLabel {
-  font-size: 0.875rem;
-  color: #374151;
-  white-space: nowrap;
-}
-
-.scaleInput {
-  width: 72px;
-  padding: 0.3rem 0.45rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 0.875rem;
-  background: #fff;
-  text-align: center;
-}
-
-.scaleInput:focus {
-  outline: none;
-  border-color: #6366f1;
-}
-
-.scaleInput:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.scaleHint {
-  font-size: 0.78rem;
-  color: #6b7280;
-}
 
 .scaleNote {
   margin: 0 0 0.5rem;

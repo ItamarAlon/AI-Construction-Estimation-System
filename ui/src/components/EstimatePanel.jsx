@@ -249,7 +249,7 @@ export default function EstimatePanel() {
                                   !hiddenTasks.has(task) && (
                                     <img
                                       key={`meas-${task}`}
-                                      className={styles.overlayImg}
+                                      className={styles.measureOverlayImg}
                                       src={`data:image/png;base64,${b64}`}
                                       alt=""
                                     />

@@ -14,7 +14,10 @@ The UI stacks layers with mix-blend-mode: multiply, making white invisible so on
 the colored highlights bleed through. This lets users toggle tasks on/off client-side.
 """
 import base64
+import struct
+import zlib
 
+import numpy as np
 import pymupdf as fitz
 
 from wall_measurement_tool import (
@@ -96,16 +99,16 @@ def _draw_label(page, cx: float, cy: float, text: str) -> None:
             cx + tw / 2 + _LABEL_PAD,
             baseline_y + _LABEL_FONTSIZE * 0.2 + _LABEL_PAD,
         ),
-        color=(0.5, 0.5, 0.5),
-        fill=(1.0, 1.0, 1.0),
-        width=0.5,
+        color=(0.6, 0.5, 0.0),
+        fill=(1.0, 1.0, 0.75),   # light yellow — not nuked by the near-white transparency pass
+        width=0.8,
     )
     page.insert_text(
         fitz.Point(cx - tw / 2, baseline_y),
         text,
         fontname="helv",
         fontsize=_LABEL_FONTSIZE,
-        color=(0.1, 0.1, 0.1),
+        color=(0.0, 0.0, 0.0),
     )
 
 
@@ -124,6 +127,37 @@ def _draw_path(page, points: list, rgb: tuple) -> None:
 def _render_b64(page, matrix) -> str:
     pix = page.get_pixmap(matrix=matrix)
     return base64.b64encode(pix.tobytes("png")).decode()
+
+
+def _render_b64_transparent(page, matrix) -> str:
+    """Render as RGBA PNG; pixels where R,G,B all > 250 become transparent.
+
+    Used for measurement label overlays so the white page background disappears
+    while the light-yellow label boxes and black text remain fully opaque.
+    The UI stacks this with mix-blend-mode: normal (transparent bg means no cover).
+    PNG is hand-encoded with struct+zlib so no PIL dependency is needed.
+    """
+    pix = page.get_pixmap(matrix=matrix)
+    rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).copy()
+    near_white = (rgb[:, :, 0] > 250) & (rgb[:, :, 1] > 250) & (rgb[:, :, 2] > 250)
+    alpha = np.where(near_white, np.uint8(0), np.uint8(255))
+    rgba = np.dstack([rgb, alpha])   # shape: (h, w, 4)
+
+    h, w = rgba.shape[:2]
+    # Build PNG raw image data: one filter byte (0 = None) per scanline
+    raw = b"".join(b"\x00" + rgba[y].tobytes() for y in range(h))
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+        + _chunk(b"IDAT", zlib.compress(raw))
+        + _chunk(b"IEND", b"")
+    )
+    return base64.b64encode(png).decode()
 
 
 def render_annotations(pdf_path: str, classifications: dict,
@@ -201,7 +235,7 @@ def render_annotations(pdf_path: str, classifications: dict,
                 lbl_page = lbl_doc.new_page(width=page.rect.width, height=page.rect.height)
                 for _, cx, cy, text in label_cmds:
                     _draw_label(lbl_page, cx, cy, text)
-                measurement_layers[task] = _render_b64(lbl_page, matrix)
+                measurement_layers[task] = _render_b64_transparent(lbl_page, matrix)
                 lbl_doc.close()
 
         pages_out.append({

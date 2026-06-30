@@ -1,14 +1,6 @@
 from pathlib import Path
 import sys
 
-from langchain.tools import tool
-
-from wall_measurement_tool import (
-    get_wall_lengths_by_color,
-    count_outline_shapes_by_color,
-    measure_total_length_by_coordinates,
-)
-
 # File is at repo root; add helpers/ and helpers/agent_wrap/ so package and
 # bare imports inside AgentBuilder resolve correctly.
 _root = Path(__file__).resolve().parent
@@ -46,13 +38,10 @@ SYSTEM_PROMPT_SELECT_IDS = (
     "and which task it belongs to. Many plans have none, that is fine, just move on."
     "TRANSCRIBE it into an explicit table:\n"
     "     <short symbol description> | <color> | <what it means> | <matching task or 'none'>\n"
-    #Might Overfit:
     "   e.g.  'solid line | yellow | wall demolition | Wall Demolition (per meter)'\n"
     "         'arc + short line | yellow | door | Door Demolition'\n"
-    #   
     "   IMPORTANT: many legends distinguish items by SYMBOL SHAPE while using the SAME color. "
     "Describe each symbol carefully enough to recognise it later in a small crop or on the plan. "
-    #Might Overfit:
     "   Also, many legends simply assign a specific color to multiple tasks of the same kind. "
     "For example green can be assigned for construction - meaning green items are for construction. "
     "(whether it's door construction/wall construction/window construction depends on it's appearance on the plan itself)."

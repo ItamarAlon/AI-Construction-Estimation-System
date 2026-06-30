@@ -87,7 +87,7 @@ export default function TaskPanel() {
             return (
               <li key={taskName} className={styles.item}>
                 <div className={styles.itemInfo}>
-                  <span className={styles.itemName}>{taskName}</span>
+                  <span className={styles.itemName}>{taskName.replace(/ \(per meter\)$/i, "")}</span>
                   {isEditing ? (
                     <div className={styles.editRow}>
                       <span className={styles.currencySymbol}>₪</span>

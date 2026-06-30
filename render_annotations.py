@@ -188,5 +188,6 @@ def _draw_legend(page, classifications, task_color):
         if rgb is None:
             continue
         page.draw_rect(fitz.Rect(x, y - 7, x + 10, y + 3), color=rgb, fill=rgb)
-        page.insert_text((x + 16, y + 2), task, fontsize=8, color=rgb)
+        label = task.removesuffix(" (per meter)") if task.endswith(" (per meter)") else task
+        page.insert_text((x + 16, y + 2), label, fontsize=8, color=rgb)
         y += 14

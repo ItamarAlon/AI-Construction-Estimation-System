@@ -150,7 +150,7 @@ export default function EstimatePanel() {
                               className={styles.legendSwatch}
                               style={{ background: entry.color }}
                             />
-                            {entry.task}
+                            {entry.task.replace(/ \(per meter\)$/i, "")}
                           </span>
                         ))}
                       </div>

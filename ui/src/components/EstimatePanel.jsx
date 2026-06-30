@@ -139,13 +139,6 @@ export default function EstimatePanel() {
                 <p className={styles.resultError}>{r.error}</p>
               ) : (
                 <>
-                  {r.scale_factor && r.scale_factor !== 1.0 && (
-                    <p className={styles.scaleNote}>
-                      Scale auto-corrected ×{r.scale_factor.toFixed(3)}
-                      {" — measurements scaled by "}
-                      {Math.round(r.scale_factor * 100)}%
-                    </p>
-                  )}
                   <pre className={styles.resultText}>{r.result}</pre>
 
                   {r.annotated_pages?.length > 0 && (

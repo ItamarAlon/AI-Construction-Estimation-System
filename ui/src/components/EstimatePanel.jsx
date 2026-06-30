@@ -2,8 +2,11 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { estimatePdf } from "../api";
 import styles from "./EstimatePanel.module.css";
 
-function BreakdownTable({ items, totalLabel, total, styles }) {
+function BreakdownTable({ items, totalLabel, hiddenTasks = new Set(), styles }) {
   const fmt = (n) => n?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const visibleTotal = items
+    .filter((i) => !hiddenTasks.has(i.task))
+    .reduce((s, i) => s + (i.cost ?? 0), 0);
   return (
     <table className={styles.breakdownTable}>
       <thead>
@@ -15,21 +18,24 @@ function BreakdownTable({ items, totalLabel, total, styles }) {
         </tr>
       </thead>
       <tbody>
-        {items.map((item) => (
-          <tr key={item.task} className={styles.breakdownRow}>
-            <td className={styles.colTask}>{item.task.replace(/ \(per meter\)$/i, "")}</td>
-            <td className={styles.colNum}>
-              {item.task.match(/\(per meter\)$/i) ? `${item.quantity}m` : item.quantity}
-            </td>
-            <td className={styles.colNum}>{item.unit_price?.toLocaleString()}</td>
-            <td className={styles.colNum}>{fmt(item.cost)}</td>
-          </tr>
-        ))}
+        {items.map((item) => {
+          const hidden = hiddenTasks.has(item.task);
+          return (
+            <tr key={item.task} className={`${styles.breakdownRow} ${hidden ? styles.rowHidden : ""}`}>
+              <td className={styles.colTask}>{item.task.replace(/ \(per meter\)$/i, "")}</td>
+              <td className={styles.colNum}>
+                {item.task.match(/\(per meter\)$/i) ? `${item.quantity}m` : item.quantity}
+              </td>
+              <td className={styles.colNum}>{item.unit_price?.toLocaleString()}</td>
+              <td className={styles.colNum}>{fmt(item.cost)}</td>
+            </tr>
+          );
+        })}
       </tbody>
       <tfoot>
         <tr className={styles.totalRow}>
           <td colSpan={3} className={styles.totalLabel}>{totalLabel}</td>
-          <td className={styles.colNum}>₪{fmt(total)}</td>
+          <td className={styles.colNum}>₪{fmt(visibleTotal)}</td>
         </tr>
       </tfoot>
     </table>
@@ -200,7 +206,6 @@ export default function EstimatePanel() {
                 <>
                   {r.annotated_pages?.length > 0 && (() => {
                     const summaryItems = (r.line_items ?? []).filter((i) => !removedTasks.has(i.task));
-                    const summaryTotal = summaryItems.reduce((s, i) => s + (i.cost ?? 0), 0);
                     return (
                       <div className={styles.annotations}>
                         {r.page_breakdowns?.length > 1 && summaryItems.length > 0 && (
@@ -209,7 +214,7 @@ export default function EstimatePanel() {
                             <BreakdownTable
                               items={summaryItems}
                               totalLabel="Grand Total"
-                              total={summaryTotal}
+                              hiddenTasks={hiddenTasks}
                               styles={styles}
                             />
                           </div>
@@ -217,7 +222,6 @@ export default function EstimatePanel() {
                         {r.annotated_pages.map((p) => {
                           const pb = r.page_breakdowns?.find((d) => d.page === p.page);
                           const pageItems = (pb?.line_items ?? []).filter((i) => !removedTasks.has(i.task));
-                          const pageTotal = pageItems.reduce((s, i) => s + (i.cost ?? 0), 0);
                           return (
                             <div key={p.page} className={styles.annotBlock}>
                               {pageItems.length > 0 && (
@@ -228,7 +232,7 @@ export default function EstimatePanel() {
                                   <BreakdownTable
                                     items={pageItems}
                                     totalLabel={r.page_breakdowns?.length > 1 ? "Subtotal" : "Grand Total"}
-                                    total={r.page_breakdowns?.length > 1 ? pageTotal : summaryTotal}
+                                    hiddenTasks={hiddenTasks}
                                     styles={styles}
                                   />
                                 </div>
@@ -315,13 +319,12 @@ export default function EstimatePanel() {
 
                   {!r.annotated_pages?.length && r.line_items?.length > 0 && (() => {
                     const items = (r.line_items ?? []).filter((i) => !removedTasks.has(i.task));
-                    const total = items.reduce((s, i) => s + (i.cost ?? 0), 0);
                     return items.length > 0 && (
                       <div className={styles.breakdown}>
                         <BreakdownTable
                           items={items}
                           totalLabel="Grand Total"
-                          total={total}
+                          hiddenTasks={hiddenTasks}
                           styles={styles}
                         />
                       </div>

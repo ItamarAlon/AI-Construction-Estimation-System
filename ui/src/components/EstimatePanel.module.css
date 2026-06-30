@@ -293,6 +293,11 @@
   color: #111827;
 }
 
+.rowHidden td {
+  opacity: 0.35;
+  text-decoration: line-through;
+}
+
 .colTask {
   text-align: left;
 }

@@ -139,7 +139,42 @@ export default function EstimatePanel() {
                 <p className={styles.resultError}>{r.error}</p>
               ) : (
                 <>
-                  <pre className={styles.resultText}>{r.result}</pre>
+                  {r.line_items?.length > 0 && (
+                    <div className={styles.breakdown}>
+                      <table className={styles.breakdownTable}>
+                        <thead>
+                          <tr>
+                            <th className={styles.colTask}>Task</th>
+                            <th className={styles.colNum}>Qty</th>
+                            <th className={styles.colNum}>Unit ₪</th>
+                            <th className={styles.colNum}>Total ₪</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {r.line_items.map((item) => (
+                            <tr key={item.task} className={styles.breakdownRow}>
+                              <td className={styles.colTask}>{item.task.replace(/ \(per meter\)$/i, "")}</td>
+                              <td className={styles.colNum}>
+                                {item.task.match(/\(per meter\)$/i)
+                                  ? `${item.quantity}m`
+                                  : item.quantity}
+                              </td>
+                              <td className={styles.colNum}>{item.unit_price?.toLocaleString()}</td>
+                              <td className={styles.colNum}>{item.cost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className={styles.totalRow}>
+                            <td colSpan={3} className={styles.totalLabel}>Grand Total</td>
+                            <td className={styles.colNum}>
+                              ₪{r.grand_total?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
 
                   {r.annotated_pages?.length > 0 && (
                     <div className={styles.annotations}>

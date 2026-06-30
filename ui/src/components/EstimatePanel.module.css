@@ -234,6 +234,69 @@
   line-height: 1.6;
 }
 
+.breakdown {
+  overflow-x: auto;
+}
+
+.breakdownTable {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.colNum {
+  min-width: 80px;
+}
+
+.breakdownTable thead tr {
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.breakdownTable th {
+  padding: 0.45rem 0.6rem;
+  color: #6b7280;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.breakdownRow {
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.breakdownRow:hover {
+  background: #f9fafb;
+}
+
+.breakdownRow td {
+  padding: 0.5rem 0.6rem;
+  color: #111827;
+}
+
+.colTask {
+  text-align: left;
+}
+
+.colNum {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalRow {
+  border-top: 2px solid #e5e7eb;
+}
+
+.totalRow td {
+  padding: 0.6rem 0.6rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.totalLabel {
+  text-align: left;
+  color: #374151;
+}
+
 .annotations {
   margin-top: 0.85rem;
 }

@@ -41,6 +41,7 @@ __pycache__/
 # Environment variables
 .env
 .env.*
+!.env.example
 /SESSION_CONTEXT.md
 /logs/logs
 

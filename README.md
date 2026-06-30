@@ -9,7 +9,7 @@ AI-powered construction cost estimator. Upload a PDF floor plan and get a priced
 
 ## Setup
 
-1. Create a `.env` file in the project root:
+1. Rename `.env.example` to `.env` and add your API key:
 
 ```
 OPENROUTER_API_KEY=your_key_here

@@ -87,17 +87,24 @@ def _paths_for_group(page, group: dict, scale_factor: float = 1.0, skip_curved: 
 
 _LABEL_FONTSIZE = 7
 _LABEL_PAD = 2
+_REF_LONG_SIDE = 842.0  # A4 long side in PDF points — annotation sizes scale relative to this
 
 
-def _draw_label(page, cx: float, cy: float, text: str) -> None:
-    tw = fitz.get_text_length(text, fontname="helv", fontsize=_LABEL_FONTSIZE)
-    baseline_y = cy + _LABEL_FONTSIZE * 0.25
+def _page_scale(page) -> float:
+    """Scale factor for annotation sizes relative to a standard A4 page."""
+    return max(page.rect.width, page.rect.height) / _REF_LONG_SIDE
+
+
+def _draw_label(page, cx: float, cy: float, text: str,
+                fontsize: float = _LABEL_FONTSIZE, pad: float = _LABEL_PAD) -> None:
+    tw = fitz.get_text_length(text, fontname="helv", fontsize=fontsize)
+    baseline_y = cy + fontsize * 0.25
     page.draw_rect(
         fitz.Rect(
-            cx - tw / 2 - _LABEL_PAD,
-            baseline_y - _LABEL_FONTSIZE * 0.8 - _LABEL_PAD,
-            cx + tw / 2 + _LABEL_PAD,
-            baseline_y + _LABEL_FONTSIZE * 0.2 + _LABEL_PAD,
+            cx - tw / 2 - pad,
+            baseline_y - fontsize * 0.8 - pad,
+            cx + tw / 2 + pad,
+            baseline_y + fontsize * 0.2 + pad,
         ),
         color=(0.6, 0.5, 0.0),
         fill=(1.0, 1.0, 0.75),   # light yellow — not nuked by the near-white transparency pass
@@ -107,21 +114,22 @@ def _draw_label(page, cx: float, cy: float, text: str) -> None:
         fitz.Point(cx - tw / 2, baseline_y),
         text,
         fontname="helv",
-        fontsize=_LABEL_FONTSIZE,
+        fontsize=fontsize,
         color=(0.0, 0.0, 0.0),
     )
 
 
-def _draw_path(page, points: list, rgb: tuple) -> None:
+def _draw_path(page, points: list, rgb: tuple,
+               width: float = _PATH_WIDTH, pad: float = _BOX_PAD) -> None:
     if len(points) < 2:
         if points:
             x, y = points[0]
-            page.draw_rect(fitz.Rect(x - _BOX_PAD, y - _BOX_PAD, x + _BOX_PAD, y + _BOX_PAD),
-                           color=rgb, width=_BOX_WIDTH)
+            page.draw_rect(fitz.Rect(x - pad, y - pad, x + pad, y + pad),
+                           color=rgb, width=width)
         return
     for (x0, y0), (x1, y1) in zip(points, points[1:]):
         page.draw_line(fitz.Point(x0, y0), fitz.Point(x1, y1),
-                       color=rgb, width=_PATH_WIDTH)
+                       color=rgb, width=width)
 
 
 def _render_b64(page, matrix) -> str:
@@ -178,6 +186,7 @@ def render_annotations(pdf_path: str, classifications: dict,
     for page_idx in range(len(doc)):
         page = doc[page_idx]
         page_no = page_idx + 1
+        sc = _page_scale(page)
 
         # Collect drawing commands per task for this page.
         # Tuples: ("path", pts, rgb) | ("label", cx, cy, text) | ("box", rect, rgb)
@@ -219,14 +228,14 @@ def render_annotations(pdf_path: str, classifications: dict,
             for cmd in cmds:
                 if cmd[0] == "path":
                     _, pts, rgb = cmd
-                    _draw_path(seg_page, pts, rgb)
+                    _draw_path(seg_page, pts, rgb, width=_PATH_WIDTH * sc, pad=_BOX_PAD * sc)
                 elif cmd[0] == "label":
                     label_cmds.append(cmd)
                 elif cmd[0] == "box":
                     _, r, rgb = cmd
-                    box = fitz.Rect(r.x0 - _BOX_PAD, r.y0 - _BOX_PAD,
-                                    r.x1 + _BOX_PAD, r.y1 + _BOX_PAD)
-                    seg_page.draw_rect(box, color=rgb, width=_BOX_WIDTH)
+                    box = fitz.Rect(r.x0 - _BOX_PAD * sc, r.y0 - _BOX_PAD * sc,
+                                    r.x1 + _BOX_PAD * sc, r.y1 + _BOX_PAD * sc)
+                    seg_page.draw_rect(box, color=rgb, width=_BOX_WIDTH * sc)
             task_layers[task] = _render_b64(seg_page, matrix)
             seg_doc.close()
 
@@ -238,7 +247,7 @@ def render_annotations(pdf_path: str, classifications: dict,
                 for cmd in label_cmds:
                     _, cx, cy, _ = cmd
                     if not any(
-                        abs(cx - ex) < 25 and abs(cy - ey) < 25
+                        abs(cx - ex) < 25 * sc and abs(cy - ey) < 25 * sc
                         for _, ex, ey, _ in deduped
                     ):
                         deduped.append(cmd)
@@ -246,7 +255,8 @@ def render_annotations(pdf_path: str, classifications: dict,
                 lbl_doc = fitz.open()
                 lbl_page = lbl_doc.new_page(width=page.rect.width, height=page.rect.height)
                 for _, cx, cy, text in deduped:
-                    _draw_label(lbl_page, cx, cy, text)
+                    _draw_label(lbl_page, cx, cy, text,
+                                fontsize=_LABEL_FONTSIZE * sc, pad=_LABEL_PAD * sc)
                 measurement_layers[task] = _render_b64_transparent(lbl_page, matrix)
                 lbl_doc.close()
 
